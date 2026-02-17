@@ -251,6 +251,53 @@ eval $(./azsel)
 | `azsel remove <name>` | Remove a tenant and its config directory |
 | `azsel completion <shell>` | Generate shell completions (bash/zsh/fish/powershell) |
 
+## Versioning
+
+This project follows [Semantic Versioning](https://semver.org/). The version is injected at build time via `-ldflags`.
+
+### Check the current version
+
+```bash
+$ azsel --version
+azsel version 0.1.0
+```
+
+### Build with a specific version
+
+```bash
+go build -ldflags "-X main.version=0.1.0" -o azsel .
+```
+
+Without `-ldflags`, the version defaults to `dev`.
+
+### Creating a release
+
+Releases are automated via [GoReleaser](https://goreleaser.com/) and GitHub Actions. To create a new release:
+
+```bash
+# 1. Tag the commit with a semver tag
+git tag v0.2.0
+
+# 2. Push the tag to trigger the release workflow
+git push origin v0.2.0
+```
+
+This will:
+- Build binaries for linux/darwin (amd64/arm64)
+- Create a GitHub Release with the binaries and checksums
+- Generate a changelog from commit messages
+
+### Download a release
+
+Pre-built binaries are available on the [Releases](https://github.com/aolmosj/azsel/releases) page.
+
+```bash
+# Example: download for macOS arm64
+curl -Lo azsel https://github.com/aolmosj/azsel/releases/download/v0.1.0/azsel_0.1.0_darwin_arm64.tar.gz
+tar xzf azsel_0.1.0_darwin_arm64.tar.gz
+mv azsel /usr/local/bin/
+```
+
 ## License
 
 MIT
