@@ -53,10 +53,16 @@ go install github.com/aolmosj/azsel@latest
 
 ### Shell integration (required)
 
-Add this line to your `~/.bashrc` or `~/.zshrc`:
+Run the init command to automatically configure your shell:
 
 ```bash
-eval "$(azsel init)"
+azsel init
+```
+
+This detects your shell (`zsh` or `bash`), appends the integration line to your profile, and tells you to reload. Alternatively, add this line manually to your `~/.bashrc` or `~/.zshrc`:
+
+```bash
+eval "$(azsel init --print)"
 ```
 
 Then reload your shell:
@@ -81,6 +87,12 @@ Logging in to tenant "contoso" (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)...
 
 Tenant "contoso" added successfully.
 To activate: eval $(azsel use contoso)
+```
+
+Use `--device-code` to authenticate via device code flow instead of opening a browser (useful for remote/headless machines):
+
+```bash
+$ azsel add --device-code
 ```
 
 ### List tenants
@@ -239,10 +251,15 @@ eval $(./azsel)
 | Command | Description |
 |---|---|
 | `azsel` | Launch interactive TUI to select a tenant |
+| `azsel init` | Set up shell integration (auto-detects shell profile) |
+| `azsel init --print` | Print the shell function without modifying files |
 | `azsel add` | Add a new tenant (interactive prompts + `az login`) |
+| `azsel add --device-code` | Add a tenant using device code flow (no browser) |
 | `azsel list` | List all configured tenants |
 | `azsel use <name>` | Activate a tenant by name |
 | `azsel remove <name>` | Remove a tenant and its config directory |
+| `azsel remove <name> -f` | Remove without confirmation |
+| `azsel --version` | Show the current version |
 | `azsel completion <shell>` | Generate shell completions (bash/zsh/fish/powershell) |
 
 ## Versioning
