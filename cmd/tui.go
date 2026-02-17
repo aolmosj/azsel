@@ -31,7 +31,12 @@ func runTUI(cmd *cobra.Command, args []string) error {
 
 	if m, ok := finalModel.(tui.Model); ok {
 		if selected := m.Selected(); selected != nil {
+			extDir, err := config.ExtensionsDir()
+			if err != nil {
+				return err
+			}
 			fmt.Printf("export AZURE_CONFIG_DIR=%s\n", selected.ConfigDir)
+			fmt.Printf("export AZURE_EXTENSION_DIR=%s\n", extDir)
 			fmt.Fprintf(os.Stderr, "Activated tenant %q\n", selected.Name)
 		}
 	}
