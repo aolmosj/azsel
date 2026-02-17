@@ -19,13 +19,7 @@ Run without subcommands to launch the interactive TUI.
 
 Shell integration (add to .bashrc / .zshrc):
 
-  azsel() {
-    local result
-    result=$(command azsel "$@")
-    if [[ $? -eq 0 && -n "$result" ]]; then
-      eval "$result"
-    fi
-  }`,
+  eval "$(azsel init)"`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runTUI,
@@ -36,6 +30,7 @@ func init() {
 	rootCmd.AddCommand(newListCmd())
 	rootCmd.AddCommand(newUseCmd())
 	rootCmd.AddCommand(newRemoveCmd())
+	rootCmd.AddCommand(newInitCmd())
 }
 
 func Execute() error {
