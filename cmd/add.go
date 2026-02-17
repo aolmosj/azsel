@@ -15,7 +15,9 @@ import (
 var nameRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
 func newAddCmd() *cobra.Command {
-	return &cobra.Command{
+	var useDeviceCode bool
+
+	c := &cobra.Command{
 		Use:   "add",
 		Short: "Add a new Azure tenant",
 		Args:  cobra.NoArgs,
@@ -50,7 +52,7 @@ func newAddCmd() *cobra.Command {
 			}
 
 			fmt.Fprintf(os.Stderr, "\nLogging in to tenant %q (%s)...\n", name, tenantID)
-			if err := azure.Login(tenantID, configDir); err != nil {
+			if err := azure.Login(tenantID, configDir, useDeviceCode); err != nil {
 				return fmt.Errorf("az login failed: %w", err)
 			}
 
@@ -68,4 +70,7 @@ func newAddCmd() *cobra.Command {
 			return nil
 		},
 	}
+
+	c.Flags().BoolVar(&useDeviceCode, "device-code", false, "Use device code flow instead of opening a browser")
+	return c
 }
