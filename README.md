@@ -53,25 +53,19 @@ go install github.com/aolmosj/azsel@latest
 
 ### Shell integration (required)
 
-Add this function to your `~/.bashrc` or `~/.zshrc`:
+Add this line to your `~/.bashrc` or `~/.zshrc`:
 
 ```bash
-azsel() {
-  local result
-  result=$(command azsel "$@")
-  if [[ $? -eq 0 && -n "$result" ]]; then
-    eval "$result"
-  fi
-}
+eval "$(azsel init)"
 ```
 
-Reload your shell:
+Then reload your shell:
 
 ```bash
 source ~/.zshrc  # or ~/.bashrc
 ```
 
-This wrapper is what makes `azsel` and `azsel use <name>` automatically set `AZURE_CONFIG_DIR` in your current shell. Without it, the export command is just printed to the terminal.
+This installs a shell wrapper that makes `azsel` and `azsel use <name>` automatically set `AZURE_CONFIG_DIR` in your current shell.
 
 ## Usage
 
