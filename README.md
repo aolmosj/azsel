@@ -22,7 +22,9 @@ Azure CLI stores its configuration (auth tokens, default subscription, etc.) in 
         └── ...
 ```
 
-Since a child process cannot modify the parent shell's environment, `azsel` prints `export AZURE_CONFIG_DIR=<path>` to **stdout** and all other output (TUI, messages) goes to **stderr**. A shell wrapper function `eval`s the output to set the variable in your current session.
+Azure CLI extensions are shared across all profiles via a common `~/.azsel/extensions/` directory (using `AZURE_EXTENSION_DIR`), so you only need to install each extension once.
+
+Since a child process cannot modify the parent shell's environment, `azsel` prints export commands to **stdout** and all other output (TUI, messages) goes to **stderr**. A shell wrapper function `eval`s the output to set the variables in your current session.
 
 ## Installation
 

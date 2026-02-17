@@ -38,6 +38,18 @@ func ConfigPath() (string, error) {
 	return filepath.Join(base, "config.json"), nil
 }
 
+func ExtensionsDir() (string, error) {
+	base, err := BaseDir()
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(base, "extensions")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", fmt.Errorf("creating extensions directory: %w", err)
+	}
+	return dir, nil
+}
+
 func TenantsDir() (string, error) {
 	base, err := BaseDir()
 	if err != nil {

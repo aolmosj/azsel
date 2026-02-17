@@ -51,8 +51,13 @@ func newAddCmd() *cobra.Command {
 				return err
 			}
 
+			extDir, err := config.ExtensionsDir()
+			if err != nil {
+				return err
+			}
+
 			fmt.Fprintf(os.Stderr, "\nLogging in to tenant %q (%s)...\n", name, tenantID)
-			if err := azure.Login(tenantID, configDir, useDeviceCode); err != nil {
+			if err := azure.Login(tenantID, configDir, extDir, useDeviceCode); err != nil {
 				return fmt.Errorf("az login failed: %w", err)
 			}
 

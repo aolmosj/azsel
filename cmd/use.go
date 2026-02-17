@@ -26,7 +26,12 @@ func newUseCmd() *cobra.Command {
 			if _, err := os.Stat(tenant.ConfigDir); os.IsNotExist(err) {
 				return fmt.Errorf("config directory %s does not exist — try running 'azsel add' again", tenant.ConfigDir)
 			}
+			extDir, err := config.ExtensionsDir()
+			if err != nil {
+				return err
+			}
 			fmt.Printf("export AZURE_CONFIG_DIR=%s\n", tenant.ConfigDir)
+			fmt.Printf("export AZURE_EXTENSION_DIR=%s\n", extDir)
 			fmt.Fprintf(os.Stderr, "Switched to tenant %q\n", tenant.Name)
 			return nil
 		},
