@@ -15,8 +15,12 @@ type AccountInfo struct {
 	} `json:"user"`
 }
 
-func Login(tenantID, configDir string) error {
-	cmd := exec.Command("az", "login", "--tenant", tenantID)
+func Login(tenantID, configDir string, useDeviceCode bool) error {
+	args := []string{"login", "--tenant", tenantID}
+	if useDeviceCode {
+		args = append(args, "--use-device-code")
+	}
+	cmd := exec.Command("az", args...)
 	cmd.Env = append(os.Environ(), "AZURE_CONFIG_DIR="+configDir)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stderr

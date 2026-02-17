@@ -14,9 +14,13 @@ const initLine = `eval "$(azsel init --print)"`
 const shellFunc = `azsel() {
   local result
   result=$(command azsel "$@")
-  if [[ $? -eq 0 && -n "$result" ]]; then
+  local exit_code=$?
+  if [[ $exit_code -eq 0 && "$result" == export* ]]; then
     eval "$result"
+  elif [[ -n "$result" ]]; then
+    echo "$result"
   fi
+  return $exit_code
 }`
 
 func detectShellRC() string {
