@@ -24,7 +24,7 @@ Azure CLI stores its configuration (auth tokens, default subscription, etc.) in 
 
 Azure CLI extensions are shared across all profiles via a common `~/.azsel/extensions/` directory (using `AZURE_EXTENSION_DIR`), so you only need to install each extension once.
 
-Since a child process cannot modify the parent shell's environment, `azsel` prints export commands to **stdout** and all other output (TUI, messages) goes to **stderr**. A shell wrapper function `eval`s the output to set the variables in your current session.
+Since a child process cannot modify the parent shell's environment, `azsel` writes export commands to a temporary file (`~/.azsel/.switch`) and a shell wrapper function sources it to set the variables in your current session. All visible output (TUI, messages) goes to **stderr**, keeping stdout clean.
 
 ## Installation
 
@@ -198,11 +198,12 @@ azsel use client-b
 
 ### Use in scripts
 
-Since `azsel use` outputs a plain export command, you can use it in scripts without the shell wrapper:
+In scripts, source the `.switch` file after running `azsel use`:
 
 ```bash
 #!/bin/bash
-eval $(command azsel use staging-tenant)
+command azsel use staging-tenant
+source "$HOME/.azsel/.switch"
 az webapp list --output table
 ```
 
@@ -230,8 +231,8 @@ go vet ./...
 ./azsel list
 # → Shows your tenant in the table
 
-# 4. Activate it
-eval $(./azsel use <name>)
+# 4. Activate it (with shell integration)
+azsel use <name>
 echo $AZURE_CONFIG_DIR
 # → ~/.azsel/tenants/<name>
 
@@ -239,13 +240,44 @@ echo $AZURE_CONFIG_DIR
 az account show
 
 # 6. Launch the TUI
-eval $(./azsel)
+azsel
 # Navigate, select a tenant, verify activation
 
 # 7. Clean up
 ./azsel remove <name> -f
 ./azsel list
 # → "No tenants configured."
+```
+
+## Debugging
+
+If tenant switching isn't working as expected, enable debug mode:
+
+```bash
+export AZSEL_DEBUG=1
+azsel use <name>
+```
+
+This outputs trace information to stderr showing:
+- Which binary is being executed
+- Whether the `.switch` file is created and sourced
+- The resulting `AZURE_CONFIG_DIR` value
+
+```
+[azsel-debug] args: use contoso
+[azsel-debug] binary: /usr/local/bin/azsel
+[azsel-debug-go] writing /Users/you/.azsel/.switch
+Switched to tenant "contoso"
+[azsel-debug] sourcing /Users/you/.azsel/.switch
+export AZURE_CONFIG_DIR=/Users/you/.azsel/tenants/contoso
+export AZURE_EXTENSION_DIR=/Users/you/.azsel/extensions
+[azsel-debug] AZURE_CONFIG_DIR=/Users/you/.azsel/tenants/contoso
+```
+
+To disable, unset the variable:
+
+```bash
+unset AZSEL_DEBUG
 ```
 
 ## Commands reference

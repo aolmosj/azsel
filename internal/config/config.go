@@ -30,6 +30,25 @@ func BaseDir() (string, error) {
 	return dir, nil
 }
 
+func EnvFile() (string, error) {
+	base, err := BaseDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, ".switch"), nil
+}
+
+func WriteEnv(lines string) error {
+	path, err := EnvFile()
+	if err != nil {
+		return err
+	}
+	if os.Getenv("AZSEL_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "[azsel-debug-go] writing %s\n", path)
+	}
+	return os.WriteFile(path, []byte(lines), 0644)
+}
+
 func ConfigPath() (string, error) {
 	base, err := BaseDir()
 	if err != nil {

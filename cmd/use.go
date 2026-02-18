@@ -11,8 +11,7 @@ import (
 func newUseCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "use <name>",
-		Short: "Print export command for a tenant",
-		Long:  `Prints "export AZURE_CONFIG_DIR=..." to stdout. Use with: eval $(azsel use <name>)`,
+		Short: "Activate a tenant",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
@@ -30,8 +29,10 @@ func newUseCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Printf("export AZURE_CONFIG_DIR=%s\n", tenant.ConfigDir)
-			fmt.Printf("export AZURE_EXTENSION_DIR=%s\n", extDir)
+			exports := fmt.Sprintf("export AZURE_CONFIG_DIR=%s\nexport AZURE_EXTENSION_DIR=%s\n", tenant.ConfigDir, extDir)
+			if err := config.WriteEnv(exports); err != nil {
+				return err
+			}
 			fmt.Fprintf(os.Stderr, "Switched to tenant %q\n", tenant.Name)
 			return nil
 		},
