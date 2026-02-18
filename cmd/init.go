@@ -12,15 +12,25 @@ import (
 const initLine = `eval "$(azsel init --print)"`
 
 const shellFunc = `azsel() {
-  local result
-  result=$(command azsel "$@")
-  local exit_code=$?
-  if [[ $exit_code -eq 0 && "$result" == export* ]]; then
-    eval "$result"
-  elif [[ -n "$result" ]]; then
-    echo "$result"
+  if [[ -n "$AZSEL_DEBUG" ]]; then
+    echo "[azsel-debug] args: $*" >&2
+    echo "[azsel-debug] binary: $(whence -p azsel 2>&1)" >&2
   fi
-  return $exit_code
+  command azsel "$@"
+  local _azsel_f="$HOME/.azsel/.switch"
+  if [[ -f "$_azsel_f" ]]; then
+    if [[ -n "$AZSEL_DEBUG" ]]; then
+      echo "[azsel-debug] sourcing $_azsel_f" >&2
+      command cat "$_azsel_f" >&2
+    fi
+    source "$_azsel_f"
+    command rm -f "$_azsel_f"
+    if [[ -n "$AZSEL_DEBUG" ]]; then
+      echo "[azsel-debug] AZURE_CONFIG_DIR=$AZURE_CONFIG_DIR" >&2
+    fi
+  elif [[ -n "$AZSEL_DEBUG" ]]; then
+    echo "[azsel-debug] no .switch file" >&2
+  fi
 }`
 
 func detectShellRC() string {

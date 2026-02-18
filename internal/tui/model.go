@@ -26,6 +26,9 @@ func NewModel(tenants []config.Tenant, currentConfigDir string) Model {
 	l.SetShowStatusBar(true)
 	l.SetFilteringEnabled(true)
 	l.Styles.Title = titleStyle
+	l.Styles.StatusBar = statusStyle
+	l.Styles.FilterPrompt = lipgloss.NewStyle().Foreground(azureBlue)
+	l.Styles.FilterCursor = lipgloss.NewStyle().Foreground(azureBlue)
 
 	return Model{list: l}
 }
