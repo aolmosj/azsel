@@ -22,6 +22,13 @@ func newAddCmd() *cobra.Command {
 		Short: "Add a new Azure tenant",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Before anything the user would have to undo. Everything below
+			// this line either asks them for input or creates directories,
+			// and all of it is wasted if az is not installed.
+			if err := azure.Available(); err != nil {
+				return err
+			}
+
 			cfg, err := config.Load()
 			if err != nil {
 				return err
