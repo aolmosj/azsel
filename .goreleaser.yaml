@@ -15,7 +15,10 @@ builds:
       - arm64
 
 archives:
-  - format: tar.gz
+  # 'format' quedó deprecado en GoReleaser v2 a favor de 'formats', que es
+  # una lista. La action flota en "~> v2", así que mantenerlo habría roto la
+  # release en cuanto se retirase la propiedad.
+  - formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:

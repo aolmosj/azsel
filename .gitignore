@@ -3,3 +3,6 @@ azsel
 
 # OS
 .DS_Store
+
+# GoReleaser
+dist/
