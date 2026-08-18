@@ -25,6 +25,16 @@ const EnvSwitchFile = "AZSEL_SWITCH_FILE"
 // old is certainly abandoned.
 const staleSwitchAge = 24 * time.Hour
 
+// dirPerm is 0700 rather than 0755 because these directories hold Azure
+// credentials. az protects its token cache itself (0600) but writes
+// azureProfile.json, az.sess and msal_http_cache.bin at 0644, so the
+// directory bit is the only lever azsel has over who can read them.
+//
+// Applied on creation only: an existing ~/.azsel keeps whatever it has, since
+// silently changing permissions on a directory the user already owns is more
+// surprise than it is worth.
+const dirPerm = 0700
+
 type Tenant struct {
 	Name      string `json:"name"`
 	TenantID  string `json:"tenantId"`
@@ -88,7 +98,7 @@ func ensureDir(path string) (created bool, err error) {
 	case !os.IsNotExist(err):
 		return false, err
 	}
-	if err := os.MkdirAll(path, 0755); err != nil {
+	if err := os.MkdirAll(path, dirPerm); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -194,7 +204,9 @@ func pruneStaleSwitchFiles() {
 			continue
 		}
 		if time.Since(info.ModTime()) > staleSwitchAge {
-			os.Remove(filepath.Join(base, e.Name()))
+			// Best effort by design: a sweep that cannot delete must never
+			// make a tenant switch fail.
+			_ = os.Remove(filepath.Join(base, e.Name()))
 		}
 	}
 }
@@ -230,8 +242,15 @@ func Save(cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("marshaling config: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	// 0600 for the same reason as the switch file: config.json decides which
+	// directory ends up in AZURE_CONFIG_DIR, so anyone who can write it
+	// chooses what the shell sources. Chmod because WriteFile only applies
+	// perm when it creates the file, and older versions wrote 0644.
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		return fmt.Errorf("writing config: %w", err)
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		return fmt.Errorf("securing config: %w", err)
 	}
 	return nil
 }

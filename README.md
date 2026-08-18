@@ -24,6 +24,8 @@ Azure CLI stores its configuration (auth tokens, default subscription, etc.) in 
 
 Azure CLI extensions are shared across all profiles via a common `~/.azsel/extensions/` directory (using `AZURE_EXTENSION_DIR`), so you only need to install each extension once.
 
+Those directories are created `0700`, and `config.json` is written `0600`. Azure CLI protects its token cache itself, but leaves `azureProfile.json`, `az.sess` and its HTTP cache world-readable, so the directory bit is the only lever `azsel` has over who else on the machine can read them. Directories that already exist keep the permissions they have.
+
 The location of `~/.azsel/` itself can be overridden with the `AZSEL_HOME` environment variable — useful for dotfile setups, containers, or keeping separate sets of profiles:
 
 ```bash
@@ -278,6 +280,7 @@ go test -race -cover ./...   # what CI runs
 go build -o azsel .
 go vet ./...
 gofmt -l .                   # must print nothing
+golangci-lint run ./...      # config in .golangci.yml
 ```
 
 ### Manual test flow

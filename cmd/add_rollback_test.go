@@ -216,7 +216,7 @@ func TestAddRemovesDirectoryWhenConfigCannotBeSaved(t *testing.T) {
 		t.Fatalf("preparando: %v", err)
 	}
 	// Devolver el permiso de escritura para que t.TempDir pueda limpiar.
-	t.Cleanup(func() { os.Chmod(home, 0755) })
+	t.Cleanup(func() { _ = os.Chmod(home, 0755) })
 
 	fakeAzureCLI(t, "exit 0")
 	feedStdin(t, "acme\n"+testTenantID+"\n")

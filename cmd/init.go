@@ -142,10 +142,15 @@ func newInitCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("opening %s: %w", rcFile, err)
 			}
-			defer f.Close()
-
 			if _, err := fmt.Fprintf(f, "\n# azsel — Azure tenant selector\n%s\n", initLine); err != nil {
+				_ = f.Close()
 				return fmt.Errorf("writing to %s: %w", rcFile, err)
+			}
+			// Checked rather than deferred: a failing Close on a file just
+			// written can mean the append never reached disk, and the user
+			// would be told their shell was configured when it was not.
+			if err := f.Close(); err != nil {
+				return fmt.Errorf("closing %s: %w", rcFile, err)
 			}
 
 			fmt.Fprintf(os.Stderr, "Added azsel init to %s\n", rcFile)
