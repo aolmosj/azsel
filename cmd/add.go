@@ -14,6 +14,37 @@ import (
 
 var nameRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
+// az login --tenant takes either a tenant GUID or one of the tenant's
+// verified domains, so accepting only GUIDs would reject a legitimate case.
+var (
+	tenantGUIDRegex = regexp.MustCompile(
+		`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	// Two or more dot-separated labels; a label is alphanumeric and may
+	// contain inner hyphens.
+	tenantDomainRegex = regexp.MustCompile(
+		`^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$`)
+)
+
+// normalizeTenantID checks the tenant ID and returns it canonicalised.
+//
+// Only the shape is checked — whether the tenant exists is az's business.
+// The point is to fail on an obvious typo before the browser opens, with a
+// message better than whatever Azure returns.
+func normalizeTenantID(raw string) (string, error) {
+	id := strings.TrimSpace(raw)
+	if id == "" {
+		return "", fmt.Errorf("tenant ID cannot be empty")
+	}
+	// Both forms are case-insensitive; storing one casing keeps config.json
+	// and the ACTIVE column of `azsel list` comparable.
+	if tenantGUIDRegex.MatchString(id) || tenantDomainRegex.MatchString(id) {
+		return strings.ToLower(id), nil
+	}
+	return "", fmt.Errorf("invalid tenant ID %q — expected a GUID such as "+
+		"11111111-1111-1111-1111-111111111111, or a domain such as "+
+		"contoso.onmicrosoft.com", id)
+}
+
 func newAddCmd() *cobra.Command {
 	var useDeviceCode bool
 
@@ -46,11 +77,11 @@ func newAddCmd() *cobra.Command {
 				return fmt.Errorf("tenant %q already exists", name)
 			}
 
-			fmt.Fprint(os.Stderr, "Azure Tenant ID: ")
-			tenantID, _ := reader.ReadString('\n')
-			tenantID = strings.TrimSpace(tenantID)
-			if tenantID == "" {
-				return fmt.Errorf("tenant ID cannot be empty")
+			fmt.Fprint(os.Stderr, "Azure Tenant ID (GUID or domain): ")
+			rawTenantID, _ := reader.ReadString('\n')
+			tenantID, err := normalizeTenantID(rawTenantID)
+			if err != nil {
+				return err
 			}
 
 			configDir, createdDir, err := config.EnsureTenantDir(name)
