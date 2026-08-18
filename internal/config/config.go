@@ -162,6 +162,12 @@ func WriteEnv(lines string) error {
 	if err := os.WriteFile(path, []byte(lines), 0600); err != nil {
 		return err
 	}
+	// WriteFile only applies perm when it creates the file. Without this, a
+	// legacy ~/.azsel/.switch written 0644 by an older version keeps those
+	// permissions forever — and that is still the path the fallback uses.
+	if err := os.Chmod(path, 0600); err != nil {
+		return err
+	}
 	pruneStaleSwitchFiles()
 	return nil
 }

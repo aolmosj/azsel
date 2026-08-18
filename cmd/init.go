@@ -15,11 +15,16 @@ const shellFunc = `azsel() {
   # One switch file per shell, keyed by PID. A single shared file let one
   # terminal consume and delete another's pending switch.
   local _azsel_f="${AZSEL_HOME:-$HOME/.azsel}/.switch.$$"
+  # Clear the path before running: PIDs get reused, so a file orphaned by a
+  # shell that died mid-switch would otherwise be sourced later by an
+  # unrelated command in a shell that happens to reuse its PID.
+  command rm -f "$_azsel_f"
   if [[ -n "$AZSEL_DEBUG" ]]; then
     echo "[azsel-debug] args: $*" >&2
     echo "[azsel-debug] switch file: $_azsel_f" >&2
   fi
   AZSEL_SWITCH_FILE="$_azsel_f" command azsel "$@"
+  local _azsel_rc=$?
   if [[ -f "$_azsel_f" ]]; then
     if [[ -n "$AZSEL_DEBUG" ]]; then
       echo "[azsel-debug] sourcing $_azsel_f" >&2
@@ -31,35 +36,52 @@ const shellFunc = `azsel() {
       echo "[azsel-debug] AZURE_CONFIG_DIR=$AZURE_CONFIG_DIR" >&2
     fi
   elif [[ -n "$AZSEL_DEBUG" ]]; then
-    echo "[azsel-debug] no .switch file" >&2
+    echo "[azsel-debug] no switch file" >&2
   fi
+  return $_azsel_rc
 }`
 
 // detectShellRC reports the rc file to install the wrapper into, plus the
 // shell it detected. An empty rcFile means azsel cannot integrate with that
 // shell; shellName is still returned so the caller can say which one it was.
-func detectShellRC() (rcFile, shellName string) {
+func detectShellRC() (rcFile, shellName string, err error) {
 	shell := os.Getenv("SHELL")
 	if shell != "" {
 		shellName = filepath.Base(shell)
 	}
+	// A failing home lookup is its own problem, not an unsupported shell.
+	// Reporting it as the latter would tell a zsh user that zsh is not
+	// supported, which the next few lines contradict.
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", shellName
+		return "", "", fmt.Errorf("getting home directory: %w", err)
 	}
 	switch shellName {
 	case "zsh":
-		return filepath.Join(home, ".zshrc"), shellName
+		return filepath.Join(home, ".zshrc"), shellName, nil
 	case "bash":
 		// Prefer .bashrc, fall back to .bash_profile on macOS
 		bashrc := filepath.Join(home, ".bashrc")
 		if _, err := os.Stat(bashrc); err == nil {
-			return bashrc, shellName
+			return bashrc, shellName, nil
 		}
-		return filepath.Join(home, ".bash_profile"), shellName
+		return filepath.Join(home, ".bash_profile"), shellName, nil
 	default:
-		return "", shellName
+		return "", shellName, nil
 	}
+}
+
+// initMarker is what identifies an already-installed integration line inside
+// a shell rc file.
+const initMarker = "azsel init"
+
+// rcContainsInit reports whether the rc file already wires up azsel.
+func rcContainsInit(rcFile string) bool {
+	data, err := os.ReadFile(rcFile)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(data), initMarker)
 }
 
 // unsupportedShellError explains what azsel can and cannot do here.
@@ -98,7 +120,10 @@ func newInitCmd() *cobra.Command {
 				return nil
 			}
 
-			rcFile, shellName := detectShellRC()
+			rcFile, shellName, err := detectShellRC()
+			if err != nil {
+				return err
+			}
 			if rcFile == "" {
 				return unsupportedShellError(shellName)
 			}
@@ -108,7 +133,7 @@ func newInitCmd() *cobra.Command {
 				return fmt.Errorf("reading %s: %w", rcFile, err)
 			}
 
-			if strings.Contains(string(data), "azsel init") {
+			if strings.Contains(string(data), initMarker) {
 				fmt.Fprintf(os.Stderr, "Already configured in %s — no changes made.\n", rcFile)
 				return nil
 			}
