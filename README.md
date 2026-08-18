@@ -124,7 +124,7 @@ This installs a shell wrapper that makes `azsel` and `azsel use <name>` automati
 ```bash
 $ azsel add
 Tenant name (lowercase, alphanumeric, hyphens): contoso
-Azure Tenant ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+Azure Tenant ID (GUID or domain): xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
 Logging in to tenant "contoso" (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)...
 # Browser opens for Azure login...
@@ -134,6 +134,8 @@ To activate: azsel use contoso
 ```
 
 If shell integration is not set up, `azsel add` says so rather than leaving you to find out when `azsel use` appears to do nothing.
+
+The tenant can be given as a GUID or as one of the tenant's verified domains, such as `contoso.onmicrosoft.com` — `az login --tenant` accepts both. Anything else is rejected before the browser opens.
 
 Use `--device-code` to authenticate via device code flow instead of opening a browser (useful for remote/headless machines):
 

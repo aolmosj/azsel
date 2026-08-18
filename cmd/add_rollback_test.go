@@ -125,3 +125,50 @@ func TestAddRejectsInvalidNameWithoutTouchingDisk(t *testing.T) {
 		t.Errorf("se pidió el tenant ID pese al nombre inválido:\n%s", got)
 	}
 }
+
+// Un tenant ID mal pegado debe morir aquí, no en Azure: el error de azsel es
+// más claro y no cuesta un viaje al navegador.
+func TestAddRejectsInvalidTenantIDBeforeCallingAz(t *testing.T) {
+	home := addSandbox(t)
+	fakeAzureCLI(t, `touch "$AZSEL_HOME/az-called"; exit 0`)
+	feedStdin(t, "acme\nno-soy-un-tenant\n")
+	quiet(t)
+
+	err := run(t, newAddCmd())
+	if err == nil {
+		t.Fatal("add aceptó un tenant ID inválido")
+	}
+	if !strings.Contains(err.Error(), "invalid tenant ID") {
+		t.Errorf("error = %q, quería que explicara el formato", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "az-called")); !os.IsNotExist(err) {
+		t.Error("se invocó az pese al tenant ID inválido")
+	}
+	if _, err := os.Stat(filepath.Join(home, "tenants", "acme")); !os.IsNotExist(err) {
+		t.Error("se creó el directorio del tenant pese al tenant ID inválido")
+	}
+}
+
+// La normalización tiene que llegar hasta config.json: si no, el mismo tenant
+// escrito con distinta caja aparecería como dos entradas distintas.
+func TestAddStoresTenantIDNormalized(t *testing.T) {
+	addSandbox(t)
+	fakeAzureCLI(t, "exit 0")
+	feedStdin(t, "acme\nAABBCCDD-1122-3344-5566-778899AABBCC\n")
+	quiet(t)
+
+	if err := run(t, newAddCmd()); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	tenant := cfg.FindTenant("acme")
+	if tenant == nil {
+		t.Fatal("no se guardó el tenant")
+	}
+	if want := "aabbccdd-1122-3344-5566-778899aabbcc"; tenant.TenantID != want {
+		t.Errorf("TenantID = %q, quería %q", tenant.TenantID, want)
+	}
+}
