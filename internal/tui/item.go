@@ -11,18 +11,20 @@ func NewTenantItem(t config.Tenant, active bool) TenantItem {
 	return TenantItem{tenant: t, active: active}
 }
 
-func (t TenantItem) Title() string {
-	prefix := "  "
+// marker is the two-column prefix flagging the tenant AZURE_CONFIG_DIR
+// currently points at. Two columns either way, so names stay aligned.
+func (t TenantItem) marker() string {
 	if t.active {
-		prefix = activeStyle.Render("* ")
+		return activeStyle.Render("* ")
 	}
-	return prefix + t.tenant.Name
+	return "  "
 }
 
-func (t TenantItem) Description() string {
-	return t.tenant.TenantID
-}
-
+// FilterValue is the only method list.Item requires. Title and Description
+// belong to list.DefaultItem, which exists for DefaultDelegate; this list
+// uses tenantDelegate, so implementing them only duplicated its rendering.
+//
+// Both name and ID are searchable: pasting a GUID should find its tenant.
 func (t TenantItem) FilterValue() string {
 	return t.tenant.Name + " " + t.tenant.TenantID
 }
