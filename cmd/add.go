@@ -35,8 +35,10 @@ func normalizeTenantID(raw string) (string, error) {
 	if id == "" {
 		return "", fmt.Errorf("tenant ID cannot be empty")
 	}
-	// Both forms are case-insensitive; storing one casing keeps config.json
-	// and the ACTIVE column of `azsel list` comparable.
+	// Both forms are case-insensitive to Azure, so the casing carries no
+	// meaning. Storing one keeps what `azsel list` and the TUI display
+	// consistent. Nothing depends on it: list marks the active tenant by
+	// comparing ConfigDir, and the TUI filter already ignores case.
 	if tenantGUIDRegex.MatchString(id) || tenantDomainRegex.MatchString(id) {
 		return strings.ToLower(id), nil
 	}
@@ -89,6 +91,25 @@ func newAddCmd() *cobra.Command {
 				return err
 			}
 
+			// From here on the tenant directory may exist without a config
+			// entry to match, so every exit has to undo it. A deferred
+			// rollback covers the paths a hand-written one keeps missing:
+			// the login, but also a failing extensions directory or a
+			// config.json that cannot be written.
+			//
+			// Only what this run created. A directory that was already there
+			// can hold valid credentials from an earlier attempt, and
+			// deleting those would turn a failed add into a lost session.
+			added := false
+			defer func() {
+				if added || !createdDir {
+					return
+				}
+				if rmErr := os.RemoveAll(configDir); rmErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not remove %s: %v\n", configDir, rmErr)
+				}
+			}()
+
 			extDir, err := config.EnsureExtensionsDir()
 			if err != nil {
 				return err
@@ -96,15 +117,6 @@ func newAddCmd() *cobra.Command {
 
 			fmt.Fprintf(os.Stderr, "\nLogging in to tenant %q (%s)...\n", name, tenantID)
 			if err := azure.Login(tenantID, configDir, extDir, useDeviceCode); err != nil {
-				// Undo only what this run created. A directory that was
-				// already there can hold valid credentials from an earlier
-				// attempt, and deleting those would turn a failed login into
-				// a lost session.
-				if createdDir {
-					if rmErr := os.RemoveAll(configDir); rmErr != nil {
-						fmt.Fprintf(os.Stderr, "Warning: could not remove %s: %v\n", configDir, rmErr)
-					}
-				}
 				return fmt.Errorf("az login failed: %w", err)
 			}
 
@@ -116,6 +128,7 @@ func newAddCmd() *cobra.Command {
 			if err := cfg.AddTenant(tenant); err != nil {
 				return err
 			}
+			added = true
 
 			fmt.Fprintf(os.Stderr, "\nTenant %q added successfully.\n", name)
 			fmt.Fprint(os.Stderr, activationHint(name, shellIntegrationInstalled()))
