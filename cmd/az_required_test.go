@@ -145,14 +145,19 @@ func feedStdin(t *testing.T, content string) *os.File {
 	return f
 }
 
-// fakeAzureCLI pone un az de mentira en el PATH con el cuerpo indicado. Deja
-// ejercitar el camino real —Available lo encuentra, Login lo ejecuta— sin
-// costuras y sin tocar Azure.
+// fakeAzureCLI pone un az de mentira delante del PATH con el cuerpo indicado.
+// Deja ejercitar el camino real —Available lo encuentra, Login lo ejecuta—
+// sin costuras y sin tocar Azure.
+//
+// Se antepone en vez de reemplazar el PATH: reemplazarlo dejaba al script sin
+// utilidades básicas, de modo que un cuerpo como `touch centinela` fallaba en
+// silencio con «command not found» y cualquier aserción sobre el centinela
+// resultaba vacía. Anteponerlo basta para que el az de mentira gane.
 func fakeAzureCLI(t *testing.T, body string) {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "az"), []byte("#!/bin/sh\n"+body+"\n"), 0755); err != nil {
 		t.Fatalf("escribiendo el az falso: %v", err)
 	}
-	t.Setenv("PATH", dir)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
