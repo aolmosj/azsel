@@ -31,12 +31,19 @@ type AccountInfo struct {
 	} `json:"user"`
 }
 
+// installURL is where to get the Azure CLI when it turns out to be missing.
+const installURL = "https://learn.microsoft.com/cli/azure/install-azure-cli"
+
 // Available reports whether the Azure CLI can be found. Commands that shell
-// out to az should check this before doing anything the user would have to
-// undo — see #10.
+// out to az should call this before doing anything the user would have to
+// undo — asking for input, creating directories — so a missing az costs
+// nothing but the message.
+//
+// LookPath's own error ("executable file not found in $PATH") only restates
+// this one, so it is not wrapped; what the user needs is where to get az.
 func Available() error {
 	if _, err := lookPath(binary); err != nil {
-		return fmt.Errorf("Azure CLI (%s) not found in PATH: %w", binary, err)
+		return fmt.Errorf("Azure CLI (%s) not found in PATH.\nInstall it: %s", binary, installURL)
 	}
 	return nil
 }
