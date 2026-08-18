@@ -327,9 +327,10 @@ func TestWriteEnv(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	// Documenta el comportamiento actual; #4 valora bajarlo a 0600.
-	if perm := fi.Mode().Perm(); perm != 0644 {
-		t.Errorf("permisos = %04o, quería 0644", perm)
+	// 0600 desde #4: el shell hace source de este fichero, así que su
+	// contenido se ejecuta con los permisos del usuario.
+	if perm := fi.Mode().Perm(); perm != 0600 {
+		t.Errorf("permisos = %04o, quería 0600", perm)
 	}
 }
 
