@@ -71,11 +71,31 @@ func newAddCmd() *cobra.Command {
 			}
 
 			fmt.Fprintf(os.Stderr, "\nTenant %q added successfully.\n", name)
-			fmt.Fprintf(os.Stderr, "To activate: eval $(azsel use %s)\n", name)
+			fmt.Fprint(os.Stderr, activationHint(name, os.Getenv(config.EnvSwitchFile) != ""))
 			return nil
 		},
 	}
 
 	c.Flags().BoolVar(&useDeviceCode, "device-code", false, "Use device code flow instead of opening a browser")
 	return c
+}
+
+// activationHint explains how to activate a freshly added tenant.
+//
+// It used to suggest `eval $(azsel use NAME)`, which does nothing: use writes
+// the export snippet to a file and reports to stderr, so the command
+// substitution captures an empty string. Users with shell integration saw it
+// work anyway — the wrapper sourced the file — which made the wrong advice
+// look right.
+//
+// The wrapper sets EnvSwitchFile when invoking the binary, so its absence is
+// a reliable sign that integration is not installed. Worth saying out loud
+// here: without it, `azsel use` cannot reach the caller's shell at all.
+func activationHint(name string, integrationActive bool) string {
+	hint := fmt.Sprintf("To activate: azsel use %s\n", name)
+	if integrationActive {
+		return hint
+	}
+	return hint + "\nShell integration does not look active. Run 'azsel init' and reload your\n" +
+		"shell — otherwise 'azsel use' cannot change AZURE_CONFIG_DIR in your session.\n"
 }
