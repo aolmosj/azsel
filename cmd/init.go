@@ -12,12 +12,15 @@ import (
 const initLine = `eval "$(azsel init --print)"`
 
 const shellFunc = `azsel() {
+  # One switch file per shell, keyed by PID. A single shared file let one
+  # terminal consume and delete another's pending switch.
+  local _azsel_f="${AZSEL_HOME:-$HOME/.azsel}/.switch.$$"
   if [[ -n "$AZSEL_DEBUG" ]]; then
     echo "[azsel-debug] args: $*" >&2
     echo "[azsel-debug] binary: $(whence -p azsel 2>&1)" >&2
+    echo "[azsel-debug] switch file: $_azsel_f" >&2
   fi
-  command azsel "$@"
-  local _azsel_f="$HOME/.azsel/.switch"
+  AZSEL_SWITCH_FILE="$_azsel_f" command azsel "$@"
   if [[ -f "$_azsel_f" ]]; then
     if [[ -n "$AZSEL_DEBUG" ]]; then
       echo "[azsel-debug] sourcing $_azsel_f" >&2
