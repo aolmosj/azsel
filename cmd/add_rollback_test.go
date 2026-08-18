@@ -172,3 +172,60 @@ func TestAddStoresTenantIDNormalized(t *testing.T) {
 		t.Errorf("TenantID = %q, quería %q", tenant.TenantID, want)
 	}
 }
+
+// El rollback no puede cubrir solo el login. Entre crear el directorio del
+// tenant y escribir config.json hay más formas de salir, y todas dejan el
+// mismo huérfano. Esta reproduce una real: un fichero ocupando la ruta del
+// directorio de extensiones, que EnsureExtensionsDir rechaza desde #7.
+func TestAddRemovesDirectoryWhenExtensionsDirFails(t *testing.T) {
+	home := addSandbox(t)
+	if err := os.WriteFile(filepath.Join(home, "extensions"), nil, 0644); err != nil {
+		t.Fatalf("preparando: %v", err)
+	}
+	fakeAzureCLI(t, "exit 0")
+	feedStdin(t, "acme\n"+testTenantID+"\n")
+	quiet(t)
+
+	if err := run(t, newAddCmd()); err == nil {
+		t.Fatal("add devolvió nil con el directorio de extensiones bloqueado")
+	}
+	if _, err := os.Stat(filepath.Join(home, "tenants", "acme")); !os.IsNotExist(err) {
+		t.Errorf("quedó el directorio huérfano (err=%v)", err)
+	}
+}
+
+// Y tampoco puede dejarlo si falla el guardado de config.json: un tenant con
+// directorio pero sin entrada es exactamente el estado que #9 elimina.
+//
+// Llegar hasta el Save requiere cuidado. Poner un directorio en la ruta de
+// config.json no vale: Load falla al arrancar el comando, antes de que se
+// cree nada, y el test pasaría sin haber ejercitado nada. Lo que se hace es
+// dejar tenants/ y extensions/ ya creados y volver ~/.azsel de solo lectura,
+// de modo que todo tenga éxito hasta la escritura final.
+func TestAddRemovesDirectoryWhenConfigCannotBeSaved(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignora los permisos de fichero")
+	}
+	home := addSandbox(t)
+	for _, dir := range []string{"tenants", "extensions"} {
+		if err := os.MkdirAll(filepath.Join(home, dir), 0755); err != nil {
+			t.Fatalf("preparando: %v", err)
+		}
+	}
+	if err := os.Chmod(home, 0555); err != nil {
+		t.Fatalf("preparando: %v", err)
+	}
+	// Devolver el permiso de escritura para que t.TempDir pueda limpiar.
+	t.Cleanup(func() { os.Chmod(home, 0755) })
+
+	fakeAzureCLI(t, "exit 0")
+	feedStdin(t, "acme\n"+testTenantID+"\n")
+	quiet(t)
+
+	if err := run(t, newAddCmd()); err == nil {
+		t.Fatal("add devolvió nil sin poder guardar la configuración")
+	}
+	if _, err := os.Stat(filepath.Join(home, "tenants", "acme")); !os.IsNotExist(err) {
+		t.Errorf("quedó el directorio huérfano (err=%v)", err)
+	}
+}
