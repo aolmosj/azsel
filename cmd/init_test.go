@@ -207,3 +207,19 @@ func TestInitLineUsesPrint(t *testing.T) {
 		t.Errorf("initLine = %q, quería que usara --print", initLine)
 	}
 }
+
+// La ayuda del comando raíz mostraba `eval "$(azsel init)"`, sin --print. Sin
+// ese flag, init no imprime la función: modifica el fichero rc. Quien pegara
+// esa línea en su .zshrc se quedaba sin integración.
+//
+// La ayuda concatena initLine en vez de repetir el texto, así que este test
+// vigila que esa unión no se deshaga.
+func TestRootHelpUsesInitLine(t *testing.T) {
+	long := rootCmd.Long
+	if !strings.Contains(long, initLine) {
+		t.Errorf("la ayuda del root no contiene %q:\n%s", initLine, long)
+	}
+	if strings.Contains(long, `eval "$(azsel init)"`) {
+		t.Error("la ayuda del root sigue mostrando 'azsel init' sin --print")
+	}
+}
