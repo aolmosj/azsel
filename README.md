@@ -374,13 +374,13 @@ This project follows [Semantic Versioning](https://semver.org/). The version is 
 
 ```bash
 $ azsel --version
-azsel version 0.1.0
+azsel version 0.4.0
 ```
 
 ### Build with a specific version
 
 ```bash
-go build -ldflags "-X main.version=0.1.0" -o azsel .
+go build -ldflags "-X main.version=0.4.0" -o azsel .
 ```
 
 Without `-ldflags`, the version defaults to `dev`.
@@ -391,10 +391,10 @@ Releases are automated via [GoReleaser](https://goreleaser.com/) and GitHub Acti
 
 ```bash
 # 1. Tag the commit with a semver tag
-git tag v0.2.0
+git tag v0.5.0
 
 # 2. Push the tag to trigger the release workflow
-git push origin v0.2.0
+git push origin v0.5.0
 ```
 
 This will:
@@ -407,11 +407,19 @@ This will:
 Pre-built binaries are available on the [Releases](https://github.com/aolmosj/azsel/releases) page.
 
 ```bash
-# Example: download for macOS arm64
-curl -Lo azsel https://github.com/aolmosj/azsel/releases/download/v0.1.0/azsel_0.1.0_darwin_arm64.tar.gz
-tar xzf azsel_0.1.0_darwin_arm64.tar.gz
+# Example: macOS arm64
+VERSION=0.4.0
+BASE=https://github.com/aolmosj/azsel/releases/download/v$VERSION
+
+curl -LO $BASE/azsel_${VERSION}_darwin_arm64.tar.gz
+curl -LO $BASE/checksums.txt
+shasum -a 256 --ignore-missing -c checksums.txt
+
+tar xzf azsel_${VERSION}_darwin_arm64.tar.gz
 mv azsel /usr/local/bin/
 ```
+
+Every release ships a `checksums.txt`; `--ignore-missing` checks only the archive you downloaded. On Linux, use `sha256sum` in place of `shasum -a 256`.
 
 ## License
 
