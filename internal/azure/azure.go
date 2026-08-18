@@ -44,6 +44,12 @@ func Available() error {
 // command builds an az invocation scoped to one tenant's directories. The
 // environment is inherited so az keeps the user's proxy, locale and so on;
 // only the two directories azsel controls are overridden.
+//
+// Those two may already be exported — by azsel itself in an active session,
+// or by an Azure CLI install that sets AZURE_EXTENSION_DIR system-wide. That
+// is fine: os/exec deduplicates Env keeping the last occurrence, so what is
+// appended here wins. TestCommandEnvOverridesInheritedValues pins it, because
+// the guarantee is not obvious from reading this.
 func command(configDir, extensionsDir string, args ...string) *exec.Cmd {
 	cmd := exec.Command(binary, args...)
 	cmd.Env = append(os.Environ(),
