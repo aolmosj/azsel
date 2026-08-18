@@ -54,11 +54,18 @@ func (d tenantDelegate) Render(w io.Writer, m list.Model, index int, listItem li
 		descStyle.Render(desc))
 }
 
+// ShortHelp declares only the keys the list does not know about.
+//
+// list.Model.ShortHelp splices the delegate's bindings between the cursor
+// keys and its own KeyMap, which already contributes Filter and Quit. Listing
+// those here too printed them twice: "… / filter • q quit • / filter • q
+// quit • ? more".
+//
+// enter is the one binding that belongs to this delegate — tenantDelegate
+// handles it in Update; the list's KeyMap has no idea it exists.
 func (d tenantDelegate) ShortHelp() []key.Binding {
 	return []key.Binding{
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "activate")),
-		key.NewBinding(key.WithKeys("/"), key.WithHelp("/", "filter")),
-		key.NewBinding(key.WithKeys("q"), key.WithHelp("q", "quit")),
 	}
 }
 

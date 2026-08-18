@@ -243,3 +243,90 @@ func TestDelegateRenderShowsSameDataSelectedOrNot(t *testing.T) {
 		}
 	}
 }
+
+// helpKeys devuelve las teclas visibles en la barra de ayuda. Las bindings
+// deshabilitadas están en el slice pero el componente de ayuda no las pinta.
+func helpKeys(m Model) []string {
+	var keys []string
+	for _, b := range m.list.ShortHelp() {
+		if b.Enabled() {
+			keys = append(keys, b.Help().Key)
+		}
+	}
+	return keys
+}
+
+// list.Model.ShortHelp intercala las bindings del delegate entre las teclas
+// de cursor y su propio KeyMap, que ya aporta Filter y Quit. Declararlas
+// también en el delegate las imprimía dos veces.
+func TestHelpHasNoDuplicateKeys(t *testing.T) {
+	m := NewModel(tenants(), "")
+
+	seen := map[string]int{}
+	for _, k := range helpKeys(m) {
+		seen[k]++
+	}
+	for k, n := range seen {
+		if n > 1 {
+			t.Errorf("la tecla %q aparece %d veces en la ayuda: %v", k, n, helpKeys(m))
+		}
+	}
+}
+
+// El delegate solo debe aportar lo que el list no sabe. enter lo maneja él;
+// «/» y «q» las pone el list por su cuenta.
+func TestHelpContentsAreComplete(t *testing.T) {
+	m := NewModel(tenants(), "")
+	keys := helpKeys(m)
+
+	has := func(want string) bool {
+		for _, k := range keys {
+			if k == want {
+				return true
+			}
+		}
+		return false
+	}
+	for _, want := range []string{"enter", "/", "q"} {
+		if !has(want) {
+			t.Errorf("falta %q en la ayuda: %v", want, keys)
+		}
+	}
+
+	if got := newDelegate().ShortHelp(); len(got) != 1 {
+		t.Errorf("el delegate declara %d bindings, quería 1 (solo enter)", len(got))
+	}
+}
+
+// Con el filtro abierto la barra cambia de forma: el list omite el ShortHelp
+// del delegate. Tampoco ahí debe haber repeticiones.
+func TestHelpHasNoDuplicateKeysWhileFiltering(t *testing.T) {
+	m := NewModel(tenants(), "")
+	m, _ = send(t, m, keyMsg("/"))
+	if m.list.FilterState() != list.Filtering {
+		t.Fatalf("no se entró en modo filtro: %v", m.list.FilterState())
+	}
+
+	seen := map[string]int{}
+	for _, k := range helpKeys(m) {
+		seen[k]++
+	}
+	for k, n := range seen {
+		if n > 1 {
+			t.Errorf("filtrando, la tecla %q aparece %d veces: %v", k, n, helpKeys(m))
+		}
+	}
+}
+
+// Y la comprobación de extremo a extremo, sobre lo que el usuario ve.
+func TestRenderedHelpHasNoRepeatedEntries(t *testing.T) {
+	m := NewModel(tenants(), "")
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 14})
+	view := ansi.Strip(updated.(Model).View())
+
+	for _, entry := range []string{"/ filter", "q quit", "enter activate"} {
+		if got := strings.Count(view, entry); got != 1 {
+			t.Errorf("%q aparece %d veces en la vista, quería 1:\n%s", entry, got, view)
+		}
+	}
+}
