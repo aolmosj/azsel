@@ -26,6 +26,19 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # The wrapper is installed into both bash and zsh, and the shell tests
+      # skip whichever interpreter is missing. Without this, coverage would
+      # depend on what the runner image happens to ship and a silent skip
+      # would pass for a green run.
+      - name: Install zsh
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh
+
+      - name: Shells under test
+        run: |
+          bash --version | head -1
+          zsh --version
+
       - run: go build ./...
 
       - run: go vet ./...
