@@ -32,7 +32,9 @@ export AZSEL_HOME=~/work/azsel
 
 There is a symmetry here: `azsel` exists because `az` honours `AZURE_CONFIG_DIR`, so `azsel` honours `AZSEL_HOME` in the same spirit.
 
-Since a child process cannot modify the parent shell's environment, `azsel` writes export commands to a temporary file (`~/.azsel/.switch`) and a shell wrapper function sources it to set the variables in your current session. All visible output (TUI, messages) goes to **stderr**, keeping stdout clean.
+Since a child process cannot modify the parent shell's environment, `azsel` writes export commands to a temporary file and a shell wrapper function sources it to set the variables in your current session. All visible output (TUI, messages) goes to **stderr**, keeping stdout clean.
+
+That file is **per shell**: the wrapper points `AZSEL_SWITCH_FILE` at `~/.azsel/.switch.$$`, keyed by the shell's PID. A single shared file meant one terminal could consume and delete a switch another terminal had not sourced yet. Files left behind by a shell that died mid-switch are swept after 24 hours.
 
 ## Installation
 
@@ -206,14 +208,19 @@ azsel use client-b
 
 ### Use in scripts
 
-In scripts, source the `.switch` file after running `azsel use`:
+In scripts, point `AZSEL_SWITCH_FILE` at a file of your own and source it after running `azsel use`:
 
 ```bash
 #!/bin/bash
+export AZSEL_SWITCH_FILE="$(mktemp)"
 command azsel use staging-tenant
-source "$HOME/.azsel/.switch"
+source "$AZSEL_SWITCH_FILE"
+rm -f "$AZSEL_SWITCH_FILE"
+
 az webapp list --output table
 ```
+
+With `AZSEL_SWITCH_FILE` unset, `azsel` falls back to `~/.azsel/.switch`, so scripts written against the older layout keep working.
 
 ## Testing
 
@@ -287,9 +294,10 @@ This outputs trace information to stderr showing:
 ```
 [azsel-debug] args: use contoso
 [azsel-debug] binary: /usr/local/bin/azsel
-[azsel-debug-go] writing /Users/you/.azsel/.switch
+[azsel-debug] switch file: /Users/you/.azsel/.switch.48231
+[azsel-debug-go] writing /Users/you/.azsel/.switch.48231
 Switched to tenant "contoso"
-[azsel-debug] sourcing /Users/you/.azsel/.switch
+[azsel-debug] sourcing /Users/you/.azsel/.switch.48231
 export AZURE_CONFIG_DIR=/Users/you/.azsel/tenants/contoso
 export AZURE_EXTENSION_DIR=/Users/you/.azsel/extensions
 [azsel-debug] AZURE_CONFIG_DIR=/Users/you/.azsel/tenants/contoso

@@ -6,12 +6,24 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // EnvHome overrides where azsel keeps its own state. It exists for the same
 // reason azsel exists at all: az honours AZURE_CONFIG_DIR, so azsel honours
 // AZSEL_HOME. Tests rely on it to stay away from the real ~/.azsel.
 const EnvHome = "AZSEL_HOME"
+
+// EnvSwitchFile names the file azsel writes its export snippet to. The shell
+// wrapper points it at a per-shell path so two terminals switching tenants at
+// the same time cannot consume each other's snippet.
+const EnvSwitchFile = "AZSEL_SWITCH_FILE"
+
+// staleSwitchAge is how long an orphaned switch file must sit before it is
+// swept. Orphans only appear when a shell dies between azsel writing the file
+// and the wrapper sourcing it — a window of milliseconds — so anything this
+// old is certainly abandoned.
+const staleSwitchAge = 24 * time.Hour
 
 type Tenant struct {
 	Name      string `json:"name"`
@@ -83,9 +95,19 @@ func ensureDir(path string) (created bool, err error) {
 }
 
 func ConfigPath() (string, error)    { return inBase("config.json") }
-func EnvFile() (string, error)       { return inBase(".switch") }
 func ExtensionsDir() (string, error) { return inBase("extensions") }
 func TenantsDir() (string, error)    { return inBase("tenants") }
+
+// EnvFile reports where the export snippet goes. The shell wrapper sets
+// EnvSwitchFile to a path carrying its own PID; the fallback keeps wrappers
+// installed before that change — and the documented scripting pattern —
+// working.
+func EnvFile() (string, error) {
+	if path := os.Getenv(EnvSwitchFile); path != "" {
+		return path, nil
+	}
+	return inBase(".switch")
+}
 
 // TenantDir computes a tenant's config directory without creating it.
 func TenantDir(name string) (string, error) {
@@ -125,17 +147,50 @@ func EnsureTenantDir(name string) (dir string, created bool, err error) {
 }
 
 func WriteEnv(lines string) error {
-	if _, err := EnsureBaseDir(); err != nil {
-		return err
-	}
 	path, err := EnvFile()
 	if err != nil {
 		return err
 	}
+	dir := filepath.Dir(path)
+	if _, err := ensureDir(dir); err != nil {
+		return fmt.Errorf("creating %s: %w", dir, err)
+	}
 	if os.Getenv("AZSEL_DEBUG") != "" {
 		fmt.Fprintf(os.Stderr, "[azsel-debug-go] writing %s\n", path)
 	}
-	return os.WriteFile(path, []byte(lines), 0644)
+	// 0600: the shell sources this file, so its contents run as the user.
+	if err := os.WriteFile(path, []byte(lines), 0600); err != nil {
+		return err
+	}
+	pruneStaleSwitchFiles()
+	return nil
+}
+
+// pruneStaleSwitchFiles sweeps switch files left behind by shells that died
+// before sourcing theirs. Best effort: a failure here must never make a
+// tenant switch fail. The legacy ~/.azsel/.switch is left alone — a wrapper
+// installed before EnvSwitchFile existed may be about to source it.
+func pruneStaleSwitchFiles() {
+	base, err := BaseDir()
+	if err != nil {
+		return
+	}
+	entries, err := os.ReadDir(base)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), ".switch.") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if time.Since(info.ModTime()) > staleSwitchAge {
+			os.Remove(filepath.Join(base, e.Name()))
+		}
+	}
 }
 
 func Load() (*Config, error) {
