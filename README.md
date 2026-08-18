@@ -24,6 +24,14 @@ Azure CLI stores its configuration (auth tokens, default subscription, etc.) in 
 
 Azure CLI extensions are shared across all profiles via a common `~/.azsel/extensions/` directory (using `AZURE_EXTENSION_DIR`), so you only need to install each extension once.
 
+The location of `~/.azsel/` itself can be overridden with the `AZSEL_HOME` environment variable — useful for dotfile setups, containers, or keeping separate sets of profiles:
+
+```bash
+export AZSEL_HOME=~/work/azsel
+```
+
+There is a symmetry here: `azsel` exists because `az` honours `AZURE_CONFIG_DIR`, so `azsel` honours `AZSEL_HOME` in the same spirit.
+
 Since a child process cannot modify the parent shell's environment, `azsel` writes export commands to a temporary file (`~/.azsel/.switch`) and a shell wrapper function sources it to set the variables in your current session. All visible output (TUI, messages) goes to **stderr**, keeping stdout clean.
 
 ## Installation
@@ -209,11 +217,24 @@ az webapp list --output table
 
 ## Testing
 
+### Automated tests
+
+```bash
+go test ./...
+```
+
+The suite needs neither Azure nor network access. Tests that touch configuration point `AZSEL_HOME` at a temporary directory, so running them never reads or overwrites your real `~/.azsel/`.
+
+```bash
+go test -race -cover ./...   # what CI runs
+```
+
 ### Build and verify
 
 ```bash
 go build -o azsel .
 go vet ./...
+gofmt -l .                   # must print nothing
 ```
 
 ### Manual test flow

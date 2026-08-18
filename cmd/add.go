@@ -46,12 +46,12 @@ func newAddCmd() *cobra.Command {
 				return fmt.Errorf("tenant ID cannot be empty")
 			}
 
-			configDir, err := config.TenantDir(name)
+			configDir, _, err := config.EnsureTenantDir(name)
 			if err != nil {
 				return err
 			}
 
-			extDir, err := config.ExtensionsDir()
+			extDir, err := config.EnsureExtensionsDir()
 			if err != nil {
 				return err
 			}

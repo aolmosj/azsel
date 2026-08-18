@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+// EnvHome overrides where azsel keeps its own state. It exists for the same
+// reason azsel exists at all: az honours AZURE_CONFIG_DIR, so azsel honours
+// AZSEL_HOME. Tests rely on it to stay away from the real ~/.azsel.
+const EnvHome = "AZSEL_HOME"
+
 type Tenant struct {
 	Name      string `json:"name"`
 	TenantID  string `json:"tenantId"`
@@ -18,27 +23,101 @@ type Config struct {
 	Tenants []Tenant `json:"tenants"`
 }
 
+// BaseDir reports where azsel keeps its state. It only computes the path —
+// nothing is created. Use EnsureBaseDir when the directory has to exist.
 func BaseDir() (string, error) {
+	if dir := os.Getenv(EnvHome); dir != "" {
+		return dir, nil
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("getting home directory: %w", err)
 	}
-	dir := filepath.Join(home, ".azsel")
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	return filepath.Join(home, ".azsel"), nil
+}
+
+// EnsureBaseDir returns the base directory, creating it when missing.
+func EnsureBaseDir() (string, error) {
+	dir, err := BaseDir()
+	if err != nil {
+		return "", err
+	}
+	if _, err := ensureDir(dir); err != nil {
 		return "", fmt.Errorf("creating base directory: %w", err)
 	}
 	return dir, nil
 }
 
-func EnvFile() (string, error) {
+// inBase joins name onto the base directory without touching the filesystem.
+func inBase(name string) (string, error) {
 	base, err := BaseDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(base, ".switch"), nil
+	return filepath.Join(base, name), nil
+}
+
+// ensureDir creates path when missing and reports whether this call created
+// it. Callers that roll back on failure need that distinction: deleting a
+// directory somebody else put there would destroy real credentials.
+func ensureDir(path string) (created bool, err error) {
+	if _, err := os.Stat(path); err == nil {
+		return false, nil
+	} else if !os.IsNotExist(err) {
+		return false, err
+	}
+	if err := os.MkdirAll(path, 0755); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func ConfigPath() (string, error)    { return inBase("config.json") }
+func EnvFile() (string, error)       { return inBase(".switch") }
+func ExtensionsDir() (string, error) { return inBase("extensions") }
+func TenantsDir() (string, error)    { return inBase("tenants") }
+
+// TenantDir computes a tenant's config directory without creating it.
+func TenantDir(name string) (string, error) {
+	tenants, err := TenantsDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(tenants, name), nil
+}
+
+// EnsureExtensionsDir returns the shared extensions directory, creating it
+// when missing. Extensions are deliberately shared across every tenant so
+// each one only has to be installed once.
+func EnsureExtensionsDir() (string, error) {
+	dir, err := ExtensionsDir()
+	if err != nil {
+		return "", err
+	}
+	if _, err := ensureDir(dir); err != nil {
+		return "", fmt.Errorf("creating extensions directory: %w", err)
+	}
+	return dir, nil
+}
+
+// EnsureTenantDir returns a tenant's config directory, creating it when
+// missing. created reports whether this call created it.
+func EnsureTenantDir(name string) (dir string, created bool, err error) {
+	dir, err = TenantDir(name)
+	if err != nil {
+		return "", false, err
+	}
+	created, err = ensureDir(dir)
+	if err != nil {
+		return "", false, fmt.Errorf("creating tenant directory: %w", err)
+	}
+	return dir, created, nil
 }
 
 func WriteEnv(lines string) error {
+	if _, err := EnsureBaseDir(); err != nil {
+		return err
+	}
 	path, err := EnvFile()
 	if err != nil {
 		return err
@@ -47,50 +126,6 @@ func WriteEnv(lines string) error {
 		fmt.Fprintf(os.Stderr, "[azsel-debug-go] writing %s\n", path)
 	}
 	return os.WriteFile(path, []byte(lines), 0644)
-}
-
-func ConfigPath() (string, error) {
-	base, err := BaseDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(base, "config.json"), nil
-}
-
-func ExtensionsDir() (string, error) {
-	base, err := BaseDir()
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(base, "extensions")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("creating extensions directory: %w", err)
-	}
-	return dir, nil
-}
-
-func TenantsDir() (string, error) {
-	base, err := BaseDir()
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(base, "tenants")
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("creating tenants directory: %w", err)
-	}
-	return dir, nil
-}
-
-func TenantDir(name string) (string, error) {
-	tenants, err := TenantsDir()
-	if err != nil {
-		return "", err
-	}
-	dir := filepath.Join(tenants, name)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return "", fmt.Errorf("creating tenant directory: %w", err)
-	}
-	return dir, nil
 }
 
 func Load() (*Config, error) {
@@ -113,6 +148,9 @@ func Load() (*Config, error) {
 }
 
 func Save(cfg *Config) error {
+	if _, err := EnsureBaseDir(); err != nil {
+		return err
+	}
 	path, err := ConfigPath()
 	if err != nil {
 		return err
