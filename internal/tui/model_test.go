@@ -8,6 +8,7 @@ import (
 	"github.com/aolmosj/azsel/internal/config"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func tenants() []config.Tenant {
@@ -206,10 +207,10 @@ func TestMarker(t *testing.T) {
 		t.Errorf("marcador inactivo = %q, no quería «*»", inactive)
 	}
 	// Ambos ocupan dos columnas para que los nombres queden alineados.
-	if got := len(stripANSI(inactive)); got != 2 {
+	if got := len(ansi.Strip(inactive)); got != 2 {
 		t.Errorf("ancho del marcador inactivo = %d, quería 2", got)
 	}
-	if got := len(stripANSI(active)); got != 2 {
+	if got := len(ansi.Strip(active)); got != 2 {
 		t.Errorf("ancho del marcador activo = %d, quería 2", got)
 	}
 }
@@ -228,8 +229,8 @@ func TestDelegateRenderShowsSameDataSelectedOrNot(t *testing.T) {
 	d.Render(&normal, m.list, m.list.Index()+1, m.list.Items()[m.list.Index()])
 
 	for label, out := range map[string]string{
-		"seleccionado": stripANSI(selected.String()),
-		"normal":       stripANSI(normal.String()),
+		"seleccionado": ansi.Strip(selected.String()),
+		"normal":       ansi.Strip(normal.String()),
 	} {
 		if !strings.Contains(out, ts[0].Name) {
 			t.Errorf("render %s = %q, quería el nombre", label, out)
@@ -241,22 +242,4 @@ func TestDelegateRenderShowsSameDataSelectedOrNot(t *testing.T) {
 			t.Errorf("render %s tiene %d líneas, quería 2 (nombre + ID)", label, lines)
 		}
 	}
-}
-
-// stripANSI quita los códigos de escape para poder comparar texto y medir
-// anchos sin que los estilos interfieran.
-func stripANSI(s string) string {
-	var out []rune
-	inEscape := false
-	for _, r := range s {
-		switch {
-		case r == '\x1b':
-			inEscape = true
-		case inEscape && r == 'm':
-			inEscape = false
-		case !inEscape:
-			out = append(out, r)
-		}
-	}
-	return string(out)
 }
