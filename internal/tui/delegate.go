@@ -19,8 +19,8 @@ func newDelegate() tenantDelegate {
 	return tenantDelegate{}
 }
 
-func (d tenantDelegate) Height() int                             { return 2 }
-func (d tenantDelegate) Spacing() int                            { return 1 }
+func (d tenantDelegate) Height() int  { return 2 }
+func (d tenantDelegate) Spacing() int { return 1 }
 func (d tenantDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd {
 	if msg, ok := msg.(tea.KeyMsg); ok {
 		if msg.String() == "enter" {
