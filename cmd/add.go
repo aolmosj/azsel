@@ -71,7 +71,7 @@ func newAddCmd() *cobra.Command {
 			}
 
 			fmt.Fprintf(os.Stderr, "\nTenant %q added successfully.\n", name)
-			fmt.Fprint(os.Stderr, activationHint(name, os.Getenv(config.EnvSwitchFile) != ""))
+			fmt.Fprint(os.Stderr, activationHint(name, shellIntegrationInstalled()))
 			return nil
 		},
 	}
@@ -91,6 +91,24 @@ func newAddCmd() *cobra.Command {
 // The wrapper sets EnvSwitchFile when invoking the binary, so its absence is
 // a reliable sign that integration is not installed. Worth saying out loud
 // here: without it, `azsel use` cannot reach the caller's shell at all.
+// shellIntegrationInstalled reports whether the wrapper looks set up.
+//
+// EnvSwitchFile is set by the wrapper itself, so it is the strongest signal —
+// but `command azsel add` deliberately bypasses the wrapper, and so does any
+// script. Falling back to the rc file avoids telling a correctly configured
+// user to run `azsel init`, which would just answer "already configured" and
+// leave them stuck.
+func shellIntegrationInstalled() bool {
+	if os.Getenv(config.EnvSwitchFile) != "" {
+		return true
+	}
+	rcFile, _, err := detectShellRC()
+	if err != nil || rcFile == "" {
+		return false
+	}
+	return rcContainsInit(rcFile)
+}
+
 func activationHint(name string, integrationActive bool) string {
 	hint := fmt.Sprintf("To activate: azsel use %s\n", name)
 	if integrationActive {

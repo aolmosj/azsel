@@ -35,7 +35,10 @@ func TestDetectShellRC(t *testing.T) {
 				}
 			}
 
-			rc, shell := detectShellRC()
+			rc, shell, err := detectShellRC()
+			if err != nil {
+				t.Fatalf("detectShellRC: %v", err)
+			}
 			want := ""
 			if c.wantRC != "" {
 				want = filepath.Join(home, c.wantRC)
@@ -71,5 +74,24 @@ func TestUnsupportedShellErrorWithoutShellEnv(t *testing.T) {
 	got := unsupportedShellError("").Error()
 	if !strings.Contains(got, "$SHELL") {
 		t.Errorf("sin SHELL definido, el error debería mencionarlo:\n%s", got)
+	}
+}
+
+// Un fallo al resolver el home es su propio problema, no un shell no
+// soportado. Antes se reportaba como lo segundo, de modo que a un usuario de
+// zsh se le decía que zsh no está soportado.
+func TestDetectShellRCSeparatesHomeFailure(t *testing.T) {
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("HOME", "")
+
+	rc, shell, err := detectShellRC()
+	if err == nil {
+		t.Fatal("detectShellRC devolvió nil sin HOME")
+	}
+	if !strings.Contains(err.Error(), "home directory") {
+		t.Errorf("error = %q, quería que mencionara el home", err)
+	}
+	if rc != "" || shell != "" {
+		t.Errorf("rcFile=%q shellName=%q, quería ambos vacíos ante un error", rc, shell)
 	}
 }
