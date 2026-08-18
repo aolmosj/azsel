@@ -53,7 +53,7 @@ func newAddCmd() *cobra.Command {
 				return fmt.Errorf("tenant ID cannot be empty")
 			}
 
-			configDir, _, err := config.EnsureTenantDir(name)
+			configDir, createdDir, err := config.EnsureTenantDir(name)
 			if err != nil {
 				return err
 			}
@@ -65,6 +65,15 @@ func newAddCmd() *cobra.Command {
 
 			fmt.Fprintf(os.Stderr, "\nLogging in to tenant %q (%s)...\n", name, tenantID)
 			if err := azure.Login(tenantID, configDir, extDir, useDeviceCode); err != nil {
+				// Undo only what this run created. A directory that was
+				// already there can hold valid credentials from an earlier
+				// attempt, and deleting those would turn a failed login into
+				// a lost session.
+				if createdDir {
+					if rmErr := os.RemoveAll(configDir); rmErr != nil {
+						fmt.Fprintf(os.Stderr, "Warning: could not remove %s: %v\n", configDir, rmErr)
+					}
+				}
 				return fmt.Errorf("az login failed: %w", err)
 			}
 
