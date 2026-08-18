@@ -1,8 +1,12 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/aolmosj/azsel/internal/config"
 )
 
 // El mensaje sugería `eval $(azsel use NAME)`, que no hace nada: use escribe
@@ -46,4 +50,50 @@ func TestActivationHintUsesTenantName(t *testing.T) {
 	if got := activationHint("globex-prod", true); !strings.Contains(got, "globex-prod") {
 		t.Errorf("mensaje = %q, quería el nombre del tenant", got)
 	}
+}
+
+// `command azsel add` esquiva el wrapper a propósito, igual que cualquier
+// script. Mirar solo AZSEL_SWITCH_FILE le decía a un usuario correctamente
+// configurado que ejecutara `azsel init`, que respondería "already
+// configured" y lo dejaría sin salida.
+func TestShellIntegrationInstalled(t *testing.T) {
+	t.Run("variable del wrapper presente", func(t *testing.T) {
+		t.Setenv(config.EnvSwitchFile, "/tmp/.switch.1")
+		if !shellIntegrationInstalled() {
+			t.Error("no se detectó la integración con la variable definida")
+		}
+	})
+
+	t.Run("wrapper esquivado pero rc configurado", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("SHELL", "/bin/zsh")
+		t.Setenv(config.EnvSwitchFile, "")
+		if err := os.WriteFile(filepath.Join(home, ".zshrc"),
+			[]byte("\n"+initLine+"\n"), 0644); err != nil {
+			t.Fatalf("preparando: %v", err)
+		}
+		if !shellIntegrationInstalled() {
+			t.Error("no se detectó la integración leyendo el rc")
+		}
+	})
+
+	t.Run("sin integración", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("SHELL", "/bin/zsh")
+		t.Setenv(config.EnvSwitchFile, "")
+		if shellIntegrationInstalled() {
+			t.Error("se detectó integración donde no la hay")
+		}
+	})
+
+	t.Run("shell no soportado", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("SHELL", "/usr/bin/fish")
+		t.Setenv(config.EnvSwitchFile, "")
+		if shellIntegrationInstalled() {
+			t.Error("se detectó integración en un shell no soportado")
+		}
+	})
 }

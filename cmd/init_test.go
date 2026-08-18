@@ -15,16 +15,39 @@ import (
 // acaba en .bashrc.
 func shells(t *testing.T) []string {
 	t.Helper()
+	seen := map[string]bool{}
 	var found []string
+	add := func(path string) {
+		if path == "" || seen[path] {
+			return
+		}
+		if _, err := os.Stat(path); err != nil {
+			return
+		}
+		seen[path] = true
+		found = append(found, path)
+	}
+
 	for _, name := range []string{"bash", "zsh"} {
 		if path, err := exec.LookPath(name); err == nil {
-			found = append(found, path)
+			add(path)
 		}
 	}
+	// macOS ships bash 3.2 at /bin/bash. If PATH happens to resolve to a
+	// newer one — Homebrew, or a future runner image — exercise both, so the
+	// README's claim about 3.2 stays backed by something rather than by luck.
+	add("/bin/bash")
+
 	if len(found) == 0 {
 		t.Skip("ni bash ni zsh disponibles")
 	}
 	return found
+}
+
+// shellLabel names a subtest after the interpreter's full path: two entries
+// can share a base name (/bin/bash and /opt/homebrew/bin/bash).
+func shellLabel(path string) string {
+	return strings.ReplaceAll(strings.TrimPrefix(path, "/"), "/", "_")
 }
 
 // runShellFunc evalúa la función de shell instalada por `azsel init --print`
@@ -51,10 +74,9 @@ func runShellFunc(t *testing.T, shell, home, stubBody, script string, extraEnv .
 		"PATH=" + binDir + ":" + os.Getenv("PATH"),
 		"HOME=" + home,
 	}, extraEnv...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s falló: %v\nsalida:\n%s", filepath.Base(shell), err, out)
-	}
+	// El estado de salida no se comprueba aquí: hay tests que ejercitan
+	// justamente la propagación de códigos distintos de cero.
+	out, _ := cmd.CombinedOutput()
 	return string(out)
 }
 
@@ -62,7 +84,7 @@ func runShellFunc(t *testing.T, shell, home, stubBody, script string, extraEnv .
 func eachShell(t *testing.T, fn func(t *testing.T, shell string)) {
 	t.Helper()
 	for _, shell := range shells(t) {
-		t.Run(filepath.Base(shell), func(t *testing.T) { fn(t, shell) })
+		t.Run(shellLabel(shell), func(t *testing.T) { fn(t, shell) })
 	}
 }
 
@@ -222,4 +244,51 @@ func TestRootHelpUsesInitLine(t *testing.T) {
 	if strings.Contains(long, `eval "$(azsel init)"`) {
 		t.Error("la ayuda del root sigue mostrando 'azsel init' sin --print")
 	}
+}
+
+// El wrapper hacía source de lo que encontrase en su ruta, aunque la
+// invocación actual no hubiera escrito nada. Los PID se reutilizan, así que
+// un huérfano dejado por un shell muerto acababa aplicándose en un shell
+// posterior que reutilizara ese PID — el mismo fallo que #4 quería evitar,
+// por otra vía.
+func TestShellFuncIgnoresOrphanFromReusedPID(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell string) {
+		home := t.TempDir()
+		// El stub no escribe nada, como haría `azsel list`.
+		out := runShellFunc(t, shell, home, "true\n",
+			`printf 'export AZURE_CONFIG_DIR=/tenant/OBSOLETO\n' > "$HOME/.azsel/.switch.$$"
+azsel list
+echo "RESULT=[${AZURE_CONFIG_DIR:-}]"`)
+
+		if !strings.Contains(out, "RESULT=[]") {
+			t.Errorf("se aplicó un switch huérfano.\nsalida:\n%s", out)
+		}
+	})
+}
+
+// El wrapper devolvía siempre 0: el `if` final se comía el estado de salida
+// del binario. `azsel use inexistente && deploy` ejecutaba deploy.
+func TestShellFuncPropagatesExitStatus(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell string) {
+		home := t.TempDir()
+		out := runShellFunc(t, shell, home, "exit 7\n",
+			`azsel use inexistente; echo "STATUS=$?"`)
+
+		if !strings.Contains(out, "STATUS=7") {
+			t.Errorf("no se propagó el código de salida.\nsalida:\n%s", out)
+		}
+	})
+}
+
+// Y el caso feliz debe seguir devolviendo 0 aun habiendo sourceado.
+func TestShellFuncReturnsZeroOnSuccess(t *testing.T) {
+	eachShell(t, func(t *testing.T, shell string) {
+		home := t.TempDir()
+		stub := `printf 'export AZURE_CONFIG_DIR=%s\n' /fake/acme > "$AZSEL_SWITCH_FILE"` + "\n"
+		out := runShellFunc(t, shell, home, stub, `azsel use acme; echo "STATUS=$?"`)
+
+		if !strings.Contains(out, "STATUS=0") {
+			t.Errorf("un cambio correcto no devolvió 0.\nsalida:\n%s", out)
+		}
+	})
 }
