@@ -35,6 +35,15 @@ func init() {
 
 func Execute() error {
 	rootCmd.Version = Version
+	// The wrapper used to resolve this with `whence -p`, which only exists in
+	// zsh, and the wrapper is installed into bash too. os.Executable is both
+	// portable and more truthful: it reports the binary actually running, not
+	// what PATH says should run.
+	if os.Getenv("AZSEL_DEBUG") != "" {
+		if exe, err := os.Executable(); err == nil {
+			fmt.Fprintf(os.Stderr, "[azsel-debug-go] binary: %s\n", exe)
+		}
+	}
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return err
