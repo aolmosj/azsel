@@ -17,9 +17,10 @@ each tenant's az CLI config via AZURE_CONFIG_DIR.
 
 Run without subcommands to launch the interactive TUI.
 
-Shell integration (add to .bashrc / .zshrc):
+Shell integration — run 'azsel init' to set it up automatically, or add
+this line to .bashrc / .zshrc yourself:
 
-  eval "$(azsel init)"`,
+  ` + initLine,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE:          runTUI,
