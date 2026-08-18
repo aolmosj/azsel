@@ -25,7 +25,7 @@ func newUseCmd() *cobra.Command {
 			if _, err := os.Stat(tenant.ConfigDir); os.IsNotExist(err) {
 				return fmt.Errorf("config directory %s does not exist — try running 'azsel add' again", tenant.ConfigDir)
 			}
-			extDir, err := config.ExtensionsDir()
+			extDir, err := config.EnsureExtensionsDir()
 			if err != nil {
 				return err
 			}
