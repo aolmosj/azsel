@@ -90,35 +90,56 @@ func TestLoadFailsWhenConfigPathIsADirectory(t *testing.T) {
 	}
 }
 
-// Documenta una arista del comportamiento actual: si la ruta del tenant ya
-// está ocupada por un *fichero*, ensureDir ve que existe y devuelve
-// created=false sin error. El fallo aparecería más tarde, al intentar az
-// login dentro. Es un caso muy improbable y no se aborda aquí; el test
-// existe para que el cambio no pase inadvertido si alguien lo modifica.
-func TestEnsureTenantDirWhenPathIsTakenByAFile(t *testing.T) {
+// Una ruta ocupada por un fichero no es un perfil existente. os.Stat tiene
+// éxito sobre un fichero, así que sin comprobar IsDir se colaría como
+// «ya existe» y el fallo aparecería mucho después, dentro de az.
+func TestEnsureTenantDirRejectsPathTakenByAFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(config.EnvHome, dir)
 	tenants := filepath.Join(dir, "tenants")
 	if err := os.MkdirAll(tenants, 0755); err != nil {
 		t.Fatalf("preparando: %v", err)
 	}
-	// acme existe pero es un fichero; pedir un directorio debajo debe fallar.
 	if err := os.WriteFile(filepath.Join(tenants, "acme"), nil, 0644); err != nil {
 		t.Fatalf("preparando: %v", err)
 	}
 
-	got, created, err := config.EnsureTenantDir("acme")
-	if err != nil {
-		t.Fatalf("EnsureTenantDir sobre un fichero existente: %v", err)
+	_, created, err := config.EnsureTenantDir("acme")
+	if err == nil {
+		t.Fatal("EnsureTenantDir devolvió nil sobre una ruta ocupada por un fichero")
 	}
+	if !strings.Contains(err.Error(), "not a directory") {
+		t.Errorf("error = %q, quería que mencionara «not a directory»", err)
+	}
+	// Nada creado: un rollback futuro (#9) no debe borrar lo que no puso él.
 	if created {
-		t.Error("created = true, quería false: la ruta ya estaba ocupada")
+		t.Error("created = true, quería false")
 	}
-	// Lo importante: no se reporta como creado, así que un rollback futuro
-	// (#9) no borrará algo que no puso él.
-	if got != filepath.Join(tenants, "acme") {
-		t.Errorf("dir = %q", got)
-	}
+}
+
+// Lo mismo para el directorio base y el de extensiones.
+func TestEnsureDirsRejectPathTakenByAFile(t *testing.T) {
+	t.Run("base", func(t *testing.T) {
+		blocker := filepath.Join(t.TempDir(), "azsel")
+		if err := os.WriteFile(blocker, nil, 0644); err != nil {
+			t.Fatalf("preparando: %v", err)
+		}
+		t.Setenv(config.EnvHome, blocker)
+		if _, err := config.EnsureBaseDir(); err == nil {
+			t.Fatal("EnsureBaseDir devolvió nil sobre un fichero")
+		}
+	})
+
+	t.Run("extensions", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv(config.EnvHome, dir)
+		if err := os.WriteFile(filepath.Join(dir, "extensions"), nil, 0644); err != nil {
+			t.Fatalf("preparando: %v", err)
+		}
+		if _, err := config.EnsureExtensionsDir(); err == nil {
+			t.Fatal("EnsureExtensionsDir devolvió nil sobre un fichero")
+		}
+	})
 }
 
 func TestWriteEnvWithDebugEnabled(t *testing.T) {
