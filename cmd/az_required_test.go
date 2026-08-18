@@ -37,7 +37,7 @@ func quiet(t *testing.T) func() string {
 	os.Stdout, os.Stderr = f, f
 	t.Cleanup(func() {
 		os.Stdout, os.Stderr = outOrig, errOrig
-		f.Close()
+		_ = f.Close()
 	})
 	return func() string {
 		data, err := os.ReadFile(path)
@@ -140,7 +140,7 @@ func feedStdin(t *testing.T, content string) *os.File {
 	os.Stdin = f
 	t.Cleanup(func() {
 		os.Stdin = orig
-		f.Close()
+		_ = f.Close()
 	})
 	return f
 }

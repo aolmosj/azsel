@@ -1,0 +1,58 @@
+version: "2"
+
+linters:
+  # Conjunto explícito, no el de por defecto. Cada linter está aquí porque
+  # cubre algo que `go vet` no mira. staticcheck se deja para más adelante y
+  # en un PR aparte: es el que más ruido genera de entrada y conviene que su
+  # triaje no se mezcle con el del resto.
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - unused
+    - gosec
+
+  settings:
+    errcheck:
+      # Toda la salida visible de azsel va a stderr, y la tabla de `list` pasa
+      # por un tabwriter cuyo Flush() sí se comprueba — que es donde aflora
+      # cualquier error de escritura. Comprobar cada Fprintf a stderr solo
+      # añadiría ruido sin cubrir nada.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+
+  exclusions:
+    rules:
+      # Los tests crean ficheros y directorios con permisos concretos a
+      # propósito: en varios casos el permiso *es* lo que se está probando.
+      - path: _test\.go
+        linters:
+          - gosec
+
+      # Ejecutar az con argumentos variables es la razón de ser del paquete.
+      # El binario es una constante y los argumentos van como elementos de
+      # argv, no a través de un shell, así que no hay inyección posible.
+      - path: internal/azure/azure\.go
+        linters:
+          - gosec
+        text: "G204"
+
+      # La ruta sale de BaseDir(), que es del propio azsel (o de AZSEL_HOME,
+      # que define el usuario para sí mismo). No hay entrada externa.
+      - path: internal/config/config\.go
+        linters:
+          - gosec
+        text: "G304"
+
+      # G302: 0644 es la convención para un fichero rc de shell, y el flag
+      # O_CREATE solo aplica permisos cuando el fichero no existe — lo normal
+      # es que ya esté ahí.
+      # G304: la ruta la produce detectShellRC() a partir de $SHELL y $HOME
+      # del propio usuario. No hay entrada externa.
+      - path: cmd/init\.go
+        linters:
+          - gosec
+        text: "G30[24]"
