@@ -36,11 +36,43 @@ Since a child process cannot modify the parent shell's environment, `azsel` writ
 
 That file is **per shell**: the wrapper points `AZSEL_SWITCH_FILE` at `~/.azsel/.switch.$$`, keyed by the shell's PID. A single shared file meant one terminal could consume and delete a switch another terminal had not sourced yet. Files left behind by a shell that died mid-switch are swept after 24 hours.
 
+## Compatibility
+
+### Shells
+
+Shell integration is what lets `azsel use` change the tenant in your *current* session. "Supported" means `azsel init` finds your profile and the generated wrapper works there.
+
+| Shell | Status | Notes |
+|---|---|---|
+| zsh | Supported | detected, installed into `~/.zshrc` |
+| bash | Supported | `~/.bashrc`, falling back to `~/.bash_profile` on macOS. Tested down to bash 3.2, the version macOS ships |
+| fish | Not supported | the wrapper uses `local`, `[[ ]]` and `source`; fish cannot parse it |
+| sh / dash | Not supported | `[[ ]]` is not POSIX |
+
+On an unsupported shell everything else still works. Run `azsel use <name>` and source the file it writes yourself — see [Use in scripts](#use-in-scripts). `azsel init` will tell you this rather than suggesting a line that would not work.
+
+### Operating systems
+
+| OS | Status |
+|---|---|
+| macOS | Supported — arm64 and amd64 |
+| Linux | Supported — arm64 and amd64 |
+| Windows | Not built, and the shell integration does not apply |
+
+CI runs the test suite on Linux and macOS, exercising the wrapper under both bash and zsh on each.
+
+### Dependencies
+
+| Dependency | Requirement |
+|---|---|
+| Azure CLI | Any version honouring `AZURE_CONFIG_DIR` and `AZURE_EXTENSION_DIR`. Verified against 2.87.0; the practical floor is older but has not been pinned down |
+| Go | Only needed to build from source. See `go.mod` for the version in force |
+
 ## Installation
 
 ### Prerequisites
 
-- [Go 1.22+](https://go.dev/dl/)
+- [Go](https://go.dev/dl/) — version as declared in `go.mod` (currently 1.24), only to build from source
 - [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) (`az`) installed and available in `PATH`
 
 ### Build from source

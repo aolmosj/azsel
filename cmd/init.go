@@ -35,25 +35,53 @@ const shellFunc = `azsel() {
   fi
 }`
 
-func detectShellRC() string {
+// detectShellRC reports the rc file to install the wrapper into, plus the
+// shell it detected. An empty rcFile means azsel cannot integrate with that
+// shell; shellName is still returned so the caller can say which one it was.
+func detectShellRC() (rcFile, shellName string) {
 	shell := os.Getenv("SHELL")
+	if shell != "" {
+		shellName = filepath.Base(shell)
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ""
+		return "", shellName
 	}
-	switch filepath.Base(shell) {
+	switch shellName {
 	case "zsh":
-		return filepath.Join(home, ".zshrc")
+		return filepath.Join(home, ".zshrc"), shellName
 	case "bash":
 		// Prefer .bashrc, fall back to .bash_profile on macOS
 		bashrc := filepath.Join(home, ".bashrc")
 		if _, err := os.Stat(bashrc); err == nil {
-			return bashrc
+			return bashrc, shellName
 		}
-		return filepath.Join(home, ".bash_profile")
+		return filepath.Join(home, ".bash_profile"), shellName
 	default:
-		return ""
+		return "", shellName
 	}
+}
+
+// unsupportedShellError explains what azsel can and cannot do here.
+//
+// The previous message said "add this manually to your shell rc", which is
+// wrong for fish: the wrapper is written in bash/zsh syntax that fish cannot
+// parse, so following the advice fails. Suggest the line only where it has a
+// chance of working, and point at the escape hatch that always does.
+func unsupportedShellError(shellName string) error {
+	which := "your shell could not be detected from $SHELL"
+	if shellName != "" {
+		which = fmt.Sprintf("%q is not one of them", shellName)
+	}
+	return fmt.Errorf(`azsel's shell integration is written for bash and zsh — %s.
+
+The wrapper uses bash/zsh syntax, so adding it to a shell like fish will not
+work. If your shell is bash-compatible you can add this line yourself:
+
+  %s
+
+Either way azsel still works: run 'azsel use <name>' and source the file it
+writes. See "Use in scripts" in the README.`, which, initLine)
 }
 
 func newInitCmd() *cobra.Command {
@@ -70,9 +98,9 @@ func newInitCmd() *cobra.Command {
 				return nil
 			}
 
-			rcFile := detectShellRC()
+			rcFile, shellName := detectShellRC()
 			if rcFile == "" {
-				return fmt.Errorf("could not detect shell profile — add this manually to your shell rc:\n\n  %s", initLine)
+				return unsupportedShellError(shellName)
 			}
 
 			data, err := os.ReadFile(rcFile)
