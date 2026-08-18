@@ -1,12 +1,9 @@
 package azure
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 )
 
 // binary is the Azure CLI executable azsel drives.
@@ -16,20 +13,11 @@ const binary = "az"
 //
 // It is a package variable so tests can observe the command azsel builds —
 // arguments, environment, stream wiring — without an Azure CLI installed, a
-// browser opening or a network. #9 and #10 need this seam more than this
-// package does: one has to simulate a failed login, the other a missing az.
+// browser opening or a network.
 var run = func(cmd *exec.Cmd) error { return cmd.Run() }
 
 // lookPath resolves an executable on PATH, injectable for the same reason.
 var lookPath = exec.LookPath
-
-type AccountInfo struct {
-	TenantID string `json:"tenantId"`
-	Name     string `json:"name"`
-	User     struct {
-		Name string `json:"name"`
-	} `json:"user"`
-}
 
 // installURL is where to get the Azure CLI when it turns out to be missing.
 const installURL = "https://learn.microsoft.com/cli/azure/install-azure-cli"
@@ -79,26 +67,4 @@ func Login(tenantID, configDir, extensionsDir string, useDeviceCode bool) error 
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	return run(cmd)
-}
-
-func AccountShow(configDir, extensionsDir string) (*AccountInfo, error) {
-	cmd := command(configDir, extensionsDir, "account", "show", "--output", "json")
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := run(cmd); err != nil {
-		// az explains itself on stderr; without this the caller only sees
-		// "exit status 1".
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return nil, fmt.Errorf("az account show: %w: %s", err, msg)
-		}
-		return nil, fmt.Errorf("az account show: %w", err)
-	}
-
-	var info AccountInfo
-	if err := json.Unmarshal(stdout.Bytes(), &info); err != nil {
-		return nil, fmt.Errorf("parsing account info: %w", err)
-	}
-	return &info, nil
 }
