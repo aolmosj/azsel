@@ -60,10 +60,20 @@ func inBase(name string) (string, error) {
 // ensureDir creates path when missing and reports whether this call created
 // it. Callers that roll back on failure need that distinction: deleting a
 // directory somebody else put there would destroy real credentials.
+//
+// An existing path that is not a directory is an error. os.Stat succeeds on
+// a plain file, so without the IsDir check a file sitting where a tenant
+// directory belongs would pass for an existing profile and only blow up
+// later, inside az.
 func ensureDir(path string) (created bool, err error) {
-	if _, err := os.Stat(path); err == nil {
+	fi, err := os.Stat(path)
+	switch {
+	case err == nil:
+		if !fi.IsDir() {
+			return false, fmt.Errorf("%s exists and is not a directory", path)
+		}
 		return false, nil
-	} else if !os.IsNotExist(err) {
+	case !os.IsNotExist(err):
 		return false, err
 	}
 	if err := os.MkdirAll(path, 0755); err != nil {
