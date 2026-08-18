@@ -17,7 +17,6 @@ const shellFunc = `azsel() {
   local _azsel_f="${AZSEL_HOME:-$HOME/.azsel}/.switch.$$"
   if [[ -n "$AZSEL_DEBUG" ]]; then
     echo "[azsel-debug] args: $*" >&2
-    echo "[azsel-debug] binary: $(whence -p azsel 2>&1)" >&2
     echo "[azsel-debug] switch file: $_azsel_f" >&2
   fi
   AZSEL_SWITCH_FILE="$_azsel_f" command azsel "$@"

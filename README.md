@@ -293,8 +293,8 @@ This outputs trace information to stderr showing:
 
 ```
 [azsel-debug] args: use contoso
-[azsel-debug] binary: /usr/local/bin/azsel
 [azsel-debug] switch file: /Users/you/.azsel/.switch.48231
+[azsel-debug-go] binary: /usr/local/bin/azsel
 [azsel-debug-go] writing /Users/you/.azsel/.switch.48231
 Switched to tenant "contoso"
 [azsel-debug] sourcing /Users/you/.azsel/.switch.48231
@@ -302,6 +302,8 @@ export AZURE_CONFIG_DIR=/Users/you/.azsel/tenants/contoso
 export AZURE_EXTENSION_DIR=/Users/you/.azsel/extensions
 [azsel-debug] AZURE_CONFIG_DIR=/Users/you/.azsel/tenants/contoso
 ```
+
+Lines prefixed `[azsel-debug]` come from the shell wrapper, `[azsel-debug-go]` from the binary itself.
 
 To disable, unset the variable:
 
