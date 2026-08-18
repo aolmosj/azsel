@@ -98,8 +98,10 @@ Logging in to tenant "contoso" (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)...
 # Browser opens for Azure login...
 
 Tenant "contoso" added successfully.
-To activate: eval $(azsel use contoso)
+To activate: azsel use contoso
 ```
+
+If shell integration is not set up, `azsel add` says so rather than leaving you to find out when `azsel use` appears to do nothing.
 
 Use `--device-code` to authenticate via device code flow instead of opening a browser (useful for remote/headless machines):
 
