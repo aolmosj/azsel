@@ -22,19 +22,30 @@ func withoutAzureCLI(t *testing.T) string {
 	return home
 }
 
-// quiet swallows the commands' direct writes to the process streams.
-func quiet(t *testing.T) {
+// quiet swallows the commands' direct writes to the process streams and
+// returns a function reading back everything they wrote. The commands write
+// straight to os.Stdout/os.Stderr rather than through cobra, so redirecting
+// the process streams is the only way to see their output.
+func quiet(t *testing.T) func() string {
 	t.Helper()
-	devnull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	path := filepath.Join(t.TempDir(), "output")
+	f, err := os.Create(path)
 	if err != nil {
-		t.Fatalf("abriendo %s: %v", os.DevNull, err)
+		t.Fatalf("creando el fichero de salida: %v", err)
 	}
 	outOrig, errOrig := os.Stdout, os.Stderr
-	os.Stdout, os.Stderr = devnull, devnull
+	os.Stdout, os.Stderr = f, f
 	t.Cleanup(func() {
 		os.Stdout, os.Stderr = outOrig, errOrig
-		devnull.Close()
+		f.Close()
 	})
+	return func() string {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("leyendo la salida: %v", err)
+		}
+		return string(data)
+	}
 }
 
 func run(t *testing.T, c *cobra.Command, args ...string) error {
@@ -54,20 +65,9 @@ func TestAddFailsBeforeAskingAnything(t *testing.T) {
 	quiet(t)
 
 	// Lo que el usuario habría tecleado si se le hubiera preguntado.
-	stdin := filepath.Join(t.TempDir(), "stdin")
-	if err := os.WriteFile(stdin, []byte("acme\n11111111-1111-1111-1111-111111111111\n"), 0644); err != nil {
-		t.Fatalf("preparando: %v", err)
-	}
-	f, err := os.Open(stdin)
-	if err != nil {
-		t.Fatalf("abriendo stdin falso: %v", err)
-	}
-	defer f.Close()
-	orig := os.Stdin
-	os.Stdin = f
-	t.Cleanup(func() { os.Stdin = orig })
+	f := feedStdin(t, "acme\n11111111-1111-1111-1111-111111111111\n")
 
-	err = run(t, newAddCmd())
+	err := run(t, newAddCmd())
 	if err == nil {
 		t.Fatal("add devolvió nil sin az instalado")
 	}
@@ -122,4 +122,37 @@ func TestCommandsThatDoNotNeedAzureCLI(t *testing.T) {
 			}
 		})
 	}
+}
+
+// feedStdin conecta os.Stdin a un fichero con lo que el usuario teclearía, y
+// devuelve el descriptor para poder comprobar cuánto se ha llegado a leer.
+func feedStdin(t *testing.T, content string) *os.File {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "stdin")
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("preparando stdin: %v", err)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("abriendo stdin falso: %v", err)
+	}
+	orig := os.Stdin
+	os.Stdin = f
+	t.Cleanup(func() {
+		os.Stdin = orig
+		f.Close()
+	})
+	return f
+}
+
+// fakeAzureCLI pone un az de mentira en el PATH con el cuerpo indicado. Deja
+// ejercitar el camino real —Available lo encuentra, Login lo ejecuta— sin
+// costuras y sin tocar Azure.
+func fakeAzureCLI(t *testing.T, body string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "az"), []byte("#!/bin/sh\n"+body+"\n"), 0755); err != nil {
+		t.Fatalf("escribiendo el az falso: %v", err)
+	}
+	t.Setenv("PATH", dir)
 }
