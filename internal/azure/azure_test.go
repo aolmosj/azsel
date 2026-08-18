@@ -37,13 +37,20 @@ func stubLookPath(t *testing.T, fn func(string) (string, error)) {
 	t.Cleanup(func() { lookPath = orig })
 }
 
+// envValue reports the value the subprocess will actually see. os/exec
+// deduplicates Env keeping the *last* occurrence, so a key inherited from the
+// parent and then overridden appears twice and the later one wins. Reading
+// the first match instead is how this helper originally got it wrong: it
+// passed on macOS, where nothing pre-sets these, and failed on a CI runner
+// that ships with AZURE_EXTENSION_DIR already exported.
 func envValue(cmd *exec.Cmd, key string) (string, bool) {
+	value, found := "", false
 	for _, kv := range cmd.Env {
-		if name, value, ok := strings.Cut(kv, "="); ok && name == key {
-			return value, true
+		if name, v, ok := strings.Cut(kv, "="); ok && name == key {
+			value, found = v, true
 		}
 	}
-	return "", false
+	return value, found
 }
 
 func TestLoginArguments(t *testing.T) {
@@ -225,4 +232,27 @@ func TestAvailable(t *testing.T) {
 			t.Errorf("se buscó %q, quería «az»", asked)
 		}
 	})
+}
+
+// azsel's whole isolation model rests on overriding these two variables, and
+// they may well already be exported — by azsel itself in an active session,
+// or by an Azure CLI install like the one on GitHub's Linux runners. Whatever
+// azsel appends has to win.
+func TestCommandEnvOverridesInheritedValues(t *testing.T) {
+	t.Setenv("AZURE_CONFIG_DIR", "/heredado/config")
+	t.Setenv("AZURE_EXTENSION_DIR", "/heredado/extensions")
+
+	got := stubRun(t, nil)
+	if err := Login("TID", "/cfg/acme", "/ext/compartido", false); err != nil {
+		t.Fatalf("Login: %v", err)
+	}
+
+	for _, c := range []struct{ key, want string }{
+		{"AZURE_CONFIG_DIR", "/cfg/acme"},
+		{"AZURE_EXTENSION_DIR", "/ext/compartido"},
+	} {
+		if v, _ := envValue(got.cmd, c.key); v != c.want {
+			t.Errorf("%s efectivo = %q, quería %q", c.key, v, c.want)
+		}
+	}
 }
