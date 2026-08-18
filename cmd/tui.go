@@ -31,7 +31,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 
 	if m, ok := finalModel.(tui.Model); ok {
 		if selected := m.Selected(); selected != nil {
-			extDir, err := config.ExtensionsDir()
+			extDir, err := config.EnsureExtensionsDir()
 			if err != nil {
 				return err
 			}
