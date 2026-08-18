@@ -42,22 +42,16 @@ func (d tenantDelegate) Render(w io.Writer, m list.Model, index int, listItem li
 
 	name := item.tenant.Name
 	desc := item.tenant.TenantID
-	marker := "  "
-	if item.active {
-		marker = activeStyle.Render("* ")
+
+	titleStyle, descStyle := normalTitleStyle, normalDescStyle
+	if index == m.Index() {
+		titleStyle, descStyle = selectedTitleStyle, selectedDescStyle
 	}
 
-	if index == m.Index() {
-		fmt.Fprintf(w, "%s%s\n  %s",
-			marker,
-			selectedTitleStyle.Render(name),
-			selectedDescStyle.Render(desc))
-	} else {
-		fmt.Fprintf(w, "%s%s\n  %s",
-			marker,
-			normalTitleStyle.Render(name),
-			normalDescStyle.Render(desc))
-	}
+	fmt.Fprintf(w, "%s%s\n  %s",
+		item.marker(),
+		titleStyle.Render(name),
+		descStyle.Render(desc))
 }
 
 func (d tenantDelegate) ShortHelp() []key.Binding {

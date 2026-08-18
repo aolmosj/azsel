@@ -190,3 +190,73 @@ func TestDelegateRender(t *testing.T) {
 		t.Errorf("render del tenant inactivo = %q, no quería marcador", out)
 	}
 }
+
+// El marcador vive en un solo sitio. Antes existía dos veces —en Title() y
+// reimplementado en el delegate— y solo se usaba la copia del delegate, así
+// que las dos podían divergir sin que nada lo notara.
+func TestMarker(t *testing.T) {
+	ts := tenants()
+
+	active := NewTenantItem(ts[0], true).marker()
+	if !strings.Contains(active, "*") {
+		t.Errorf("marcador activo = %q, quería que incluyera «*»", active)
+	}
+	inactive := NewTenantItem(ts[0], false).marker()
+	if strings.Contains(inactive, "*") {
+		t.Errorf("marcador inactivo = %q, no quería «*»", inactive)
+	}
+	// Ambos ocupan dos columnas para que los nombres queden alineados.
+	if got := len(stripANSI(inactive)); got != 2 {
+		t.Errorf("ancho del marcador inactivo = %d, quería 2", got)
+	}
+	if got := len(stripANSI(active)); got != 2 {
+		t.Errorf("ancho del marcador activo = %d, quería 2", got)
+	}
+}
+
+// Seleccionado o no, el ítem muestra los mismos datos. Lo que cambia es el
+// adorno: el estilo seleccionado añade un borde izquierdo, que es contenido
+// real y no un código de escape, así que no se pueden comparar las cadenas
+// tal cual.
+func TestDelegateRenderShowsSameDataSelectedOrNot(t *testing.T) {
+	ts := tenants()
+	m := NewModel(ts, "")
+	d := newDelegate()
+
+	var selected, normal bytes.Buffer
+	d.Render(&selected, m.list, m.list.Index(), m.list.Items()[m.list.Index()])
+	d.Render(&normal, m.list, m.list.Index()+1, m.list.Items()[m.list.Index()])
+
+	for label, out := range map[string]string{
+		"seleccionado": stripANSI(selected.String()),
+		"normal":       stripANSI(normal.String()),
+	} {
+		if !strings.Contains(out, ts[0].Name) {
+			t.Errorf("render %s = %q, quería el nombre", label, out)
+		}
+		if !strings.Contains(out, ts[0].TenantID) {
+			t.Errorf("render %s = %q, quería el tenant ID", label, out)
+		}
+		if lines := strings.Count(out, "\n") + 1; lines != 2 {
+			t.Errorf("render %s tiene %d líneas, quería 2 (nombre + ID)", label, lines)
+		}
+	}
+}
+
+// stripANSI quita los códigos de escape para poder comparar texto y medir
+// anchos sin que los estilos interfieran.
+func stripANSI(s string) string {
+	var out []rune
+	inEscape := false
+	for _, r := range s {
+		switch {
+		case r == '\x1b':
+			inEscape = true
+		case inEscape && r == 'm':
+			inEscape = false
+		case !inEscape:
+			out = append(out, r)
+		}
+	}
+	return string(out)
+}
