@@ -190,3 +190,40 @@ func TestCommandEnvOverridesInheritedValues(t *testing.T) {
 		t.Errorf("AZURE_CONFIG_DIR efectivo = %q, quería «/cfg/acme»", v)
 	}
 }
+
+func TestLoginServicePrincipalWithCertificate(t *testing.T) {
+	got := stubRun(t, nil)
+	if err := LoginServicePrincipal("TID", "/cfg", "app-id", "/path/cert.pem", ""); err != nil {
+		t.Fatalf("LoginServicePrincipal: %v", err)
+	}
+	want := []string{"az", "login", "--service-principal", "--tenant", "TID", "--username", "app-id", "--certificate", "/path/cert.pem"}
+	if !slices.Equal(got.cmd.Args, want) {
+		t.Errorf("args = %v, wanted %v", got.cmd.Args, want)
+	}
+	// Non-interactive: stdin is not connected.
+	if got.cmd.Stdin != nil {
+		t.Error("stdin connected for a service-principal login; should be nil")
+	}
+}
+
+func TestLoginServicePrincipalWithSecret(t *testing.T) {
+	got := stubRun(t, nil)
+	if err := LoginServicePrincipal("TID", "/cfg", "app-id", "", "s3cr3t"); err != nil {
+		t.Fatalf("LoginServicePrincipal: %v", err)
+	}
+	want := []string{"az", "login", "--service-principal", "--tenant", "TID", "--username", "app-id", "--password", "s3cr3t"}
+	if !slices.Equal(got.cmd.Args, want) {
+		t.Errorf("args = %v, wanted %v", got.cmd.Args, want)
+	}
+}
+
+// The tenant's config directory is still scoped via AZURE_CONFIG_DIR.
+func TestLoginServicePrincipalScopesConfigDir(t *testing.T) {
+	got := stubRun(t, nil)
+	if err := LoginServicePrincipal("TID", "/cfg/acme", "app", "", "x"); err != nil {
+		t.Fatalf("LoginServicePrincipal: %v", err)
+	}
+	if v, ok := envValue(got.cmd, "AZURE_CONFIG_DIR"); !ok || v != "/cfg/acme" {
+		t.Errorf("AZURE_CONFIG_DIR = %q (present=%v), wanted /cfg/acme", v, ok)
+	}
+}

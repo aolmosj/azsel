@@ -66,3 +66,23 @@ func Login(tenantID, configDir string, useDeviceCode bool) error {
 	cmd.Stderr = os.Stderr
 	return run(cmd)
 }
+
+// LoginServicePrincipal logs a tenant in with a service principal, scoped to
+// configDir. Either certificate (a PEM path) or secret is used, never both;
+// the caller enforces that. Non-interactive, so stdin is not connected.
+//
+// With a secret, az takes it as --password in its own argv — there is no
+// stdin or env option in `az login` for it — so it is briefly visible in the
+// process list. Prefer certificate where the exposure matters.
+func LoginServicePrincipal(tenantID, configDir, appID, certificate, secret string) error {
+	args := []string{"login", "--service-principal", "--tenant", tenantID, "--username", appID}
+	if certificate != "" {
+		args = append(args, "--certificate", certificate)
+	} else {
+		args = append(args, "--password", secret)
+	}
+	cmd := command(configDir, args...)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	return run(cmd)
+}
