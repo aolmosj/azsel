@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -48,17 +49,27 @@ func normalizeTenantID(raw string) (string, error) {
 }
 
 func newAddCmd() *cobra.Command {
-	var useDeviceCode bool
+	var (
+		useDeviceCode    bool
+		tenantFlag       string
+		servicePrincipal bool
+		username         string
+		certificate      string
+		passwordStdin    bool
+	)
 
 	c := &cobra.Command{
-		Use:   "add",
+		Use:   "add [name]",
 		Short: "Add a new Azure tenant",
-		Args:  cobra.NoArgs,
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Before anything the user would have to undo. Everything below
-			// this line either asks them for input or creates directories,
-			// and all of it is wasted if az is not installed.
+			// either asks for input or creates directories, all wasted if az
+			// is not installed.
 			if err := azure.Available(); err != nil {
+				return err
+			}
+			if err := validateAddFlags(args, tenantFlag, servicePrincipal, useDeviceCode, username, certificate, passwordStdin); err != nil {
 				return err
 			}
 
@@ -69,9 +80,15 @@ func newAddCmd() *cobra.Command {
 
 			reader := bufio.NewReader(os.Stdin)
 
-			fmt.Fprint(os.Stderr, "Tenant name (lowercase, alphanumeric, hyphens): ")
-			name, _ := reader.ReadString('\n')
-			name = strings.TrimSpace(name)
+			// Name: a positional argument, or a prompt when omitted.
+			var name string
+			if len(args) == 1 {
+				name = strings.TrimSpace(args[0])
+			} else {
+				fmt.Fprint(os.Stderr, "Tenant name (lowercase, alphanumeric, hyphens): ")
+				line, _ := reader.ReadString('\n')
+				name = strings.TrimSpace(line)
+			}
 			if !nameRegex.MatchString(name) {
 				return fmt.Errorf("invalid name %q — use lowercase alphanumeric and hyphens only", name)
 			}
@@ -79,11 +96,35 @@ func newAddCmd() *cobra.Command {
 				return fmt.Errorf("tenant %q already exists", name)
 			}
 
-			fmt.Fprint(os.Stderr, "Azure Tenant ID (GUID or domain): ")
-			rawTenantID, _ := reader.ReadString('\n')
+			// Tenant ID: the --tenant flag, or a prompt when omitted.
+			rawTenantID := tenantFlag
+			if rawTenantID == "" {
+				fmt.Fprint(os.Stderr, "Azure Tenant ID (GUID or domain): ")
+				rawTenantID, _ = reader.ReadString('\n')
+			}
 			tenantID, err := normalizeTenantID(rawTenantID)
 			if err != nil {
 				return err
+			}
+
+			// Read a service-principal secret before touching disk. It comes
+			// from stdin, never a flag, so it stays out of shell history and
+			// azsel's own argv (az still takes it as --password in its argv).
+			var secret string
+			if servicePrincipal && passwordStdin {
+				b, err := io.ReadAll(os.Stdin)
+				if err != nil {
+					return fmt.Errorf("reading secret from stdin: %w", err)
+				}
+				secret = strings.TrimRight(string(b), "\r\n")
+				if secret == "" {
+					return fmt.Errorf("--password-stdin given but stdin was empty")
+				}
+			}
+			if servicePrincipal && certificate != "" {
+				if _, err := os.Stat(certificate); err != nil {
+					return fmt.Errorf("certificate: %w", err)
+				}
 			}
 
 			configDir, createdDir, err := config.EnsureTenantDir(name)
@@ -91,15 +132,9 @@ func newAddCmd() *cobra.Command {
 				return err
 			}
 
-			// From here on the tenant directory may exist without a config
-			// entry to match, so every exit has to undo it. A deferred
-			// rollback covers the paths a hand-written one keeps missing:
-			// the login, but also a failing extensions directory or a
-			// config.json that cannot be written.
-			//
-			// Only what this run created. A directory that was already there
-			// can hold valid credentials from an earlier attempt, and
-			// deleting those would turn a failed add into a lost session.
+			// From here the tenant directory may exist without a matching
+			// config entry, so every exit undoes it — but only what this run
+			// created; a pre-existing directory can hold valid credentials.
 			added := false
 			defer func() {
 				if added || !createdDir {
@@ -110,25 +145,25 @@ func newAddCmd() *cobra.Command {
 				}
 			}()
 
-			// Share extensions through the filesystem before az runs, so the
-			// login already reads and writes them in the shared directory
-			// (see #26). Reached through the default link there is no
-			// AZURE_EXTENSION_DIR to steer az, so the symlink is what makes
-			// sharing hold however the tenant is later entered.
+			// Share extensions through the filesystem before az runs (see
+			// #26): reached through the default link there is no
+			// AZURE_EXTENSION_DIR, so the symlink is what makes sharing hold.
 			if err := config.EnsureSharedExtensionsLink(configDir); err != nil {
 				return err
 			}
 
 			fmt.Fprintf(os.Stderr, "\nLogging in to tenant %q (%s)...\n", name, tenantID)
-			if err := azure.Login(tenantID, configDir, useDeviceCode); err != nil {
-				return fmt.Errorf("az login failed: %w", err)
+			var loginErr error
+			if servicePrincipal {
+				loginErr = azure.LoginServicePrincipal(tenantID, configDir, username, certificate, secret)
+			} else {
+				loginErr = azure.Login(tenantID, configDir, useDeviceCode)
+			}
+			if loginErr != nil {
+				return fmt.Errorf("az login failed: %w", loginErr)
 			}
 
-			tenant := config.Tenant{
-				Name:      name,
-				TenantID:  tenantID,
-				ConfigDir: configDir,
-			}
+			tenant := config.Tenant{Name: name, TenantID: tenantID, ConfigDir: configDir}
 			if err := cfg.AddTenant(tenant); err != nil {
 				return err
 			}
@@ -140,8 +175,45 @@ func newAddCmd() *cobra.Command {
 		},
 	}
 
-	c.Flags().BoolVar(&useDeviceCode, "device-code", false, "Use device code flow instead of opening a browser")
+	f := c.Flags()
+	f.BoolVar(&useDeviceCode, "device-code", false, "Use device code flow instead of opening a browser")
+	f.StringVar(&tenantFlag, "tenant", "", "Tenant ID (GUID or domain); prompted if omitted")
+	f.BoolVar(&servicePrincipal, "service-principal", false, "Log in with a service principal instead of interactively")
+	f.StringVarP(&username, "username", "u", "", "Service principal app (client) ID")
+	f.StringVar(&certificate, "certificate", "", "PEM file for service-principal auth")
+	f.BoolVar(&passwordStdin, "password-stdin", false, "Read the service-principal secret from stdin")
 	return c
+}
+
+// validateAddFlags enforces the service-principal contract before any prompt
+// or disk work. Service-principal mode is non-interactive: the name and
+// --tenant must be given up front, so nothing has to be prompted — which
+// matters because --password-stdin claims stdin for the secret.
+func validateAddFlags(args []string, tenantFlag string, sp, deviceCode bool, username, certificate string, passwordStdin bool) error {
+	if !sp {
+		switch {
+		case username != "", certificate != "", passwordStdin:
+			return fmt.Errorf("--username, --certificate and --password-stdin require --service-principal")
+		}
+		return nil
+	}
+	if deviceCode {
+		return fmt.Errorf("--service-principal cannot be combined with --device-code")
+	}
+	if len(args) != 1 {
+		return fmt.Errorf("service-principal mode is non-interactive: pass the tenant name as an argument")
+	}
+	if tenantFlag == "" {
+		return fmt.Errorf("service-principal mode is non-interactive: pass --tenant")
+	}
+	if username == "" {
+		return fmt.Errorf("--service-principal requires --username (the app/client ID)")
+	}
+	if (certificate != "") == passwordStdin {
+		// Both set or neither set — need exactly one.
+		return fmt.Errorf("provide exactly one of --certificate or --password-stdin")
+	}
+	return nil
 }
 
 // activationHint explains how to activate a freshly added tenant.

@@ -145,6 +145,24 @@ Use `--device-code` to authenticate via device code flow instead of opening a br
 $ azsel add --device-code
 ```
 
+#### Service principal
+
+To add a tenant authenticated with a service principal — an automation or read-only identity — use `--service-principal`. This mode is non-interactive, so the name and `--tenant` are passed up front:
+
+```bash
+# With a certificate (recommended — the secret never touches a command line)
+azsel add gencat --tenant <tenant-id> \
+  --service-principal --username <app-id> --certificate ./sp-cert.pem
+
+# With a client secret, read from stdin
+printf '%s' "$CLIENT_SECRET" | azsel add gencat --tenant <tenant-id> \
+  --service-principal --username <app-id> --password-stdin
+```
+
+`--password-stdin` keeps the secret out of your shell history and out of azsel's own arguments. Note that `az login` still takes the secret as `--password` in its own arguments, so it is briefly visible in the process list; use `--certificate` where that matters. There is no plain `--password` flag, by design.
+
+Whether the service principal is read-only is its Azure role (RBAC) — the login is the same either way.
+
 ### List tenants
 
 ```bash
@@ -392,6 +410,7 @@ unset AZSEL_DEBUG
 | `azsel init --print` | Print the shell function without modifying files |
 | `azsel add` | Add a new tenant (interactive prompts + `az login`) |
 | `azsel add --device-code` | Add a tenant using device code flow (no browser) |
+| `azsel add <name> --tenant <id> --service-principal ...` | Add a tenant with a service principal (`--certificate` or `--password-stdin`) |
 | `azsel list` | List all configured tenants |
 | `azsel use <name>` | Activate a tenant by name |
 | `azsel default <name>` | Make a tenant the default for new shells |
