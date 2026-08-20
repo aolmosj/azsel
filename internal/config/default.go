@@ -1,10 +1,12 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // AzureDir is where the Azure CLI keeps its state when AZURE_CONFIG_DIR is
@@ -167,6 +169,15 @@ func SetDefault(cfg *Config, name string, timestamp string) (SetResult, error) {
 	}
 
 	result := SetResult{Tenant: name}
+
+	// Do the extensions link first: it only touches the tenant's own
+	// directory, never ~/.azure. If it were left until after the backup, a
+	// failure here would have already moved a real ~/.azure aside with no new
+	// link in its place — az silently logged out. See review of #26.
+	if err := EnsureSharedExtensionsLink(tenant.ConfigDir); err != nil {
+		return SetResult{}, err
+	}
+
 	switch info.State {
 	case DefaultNone:
 		// Nothing in the way.
@@ -190,13 +201,6 @@ func SetDefault(cfg *Config, name string, timestamp string) (SetResult, error) {
 		result.Repointed = true
 	case DefaultForeign:
 		return SetResult{}, foreignLinkError(azure, info.Target)
-	}
-
-	// Share extensions through the filesystem: the default is reached via the
-	// link with no AZURE_EXTENSION_DIR, so az would otherwise resolve
-	// extensions inside the tenant. See #26.
-	if err := EnsureSharedExtensionsLink(tenant.ConfigDir); err != nil {
-		return SetResult{}, err
 	}
 
 	if err := replaceWithSymlink(tenant.ConfigDir, azure); err != nil {
@@ -276,9 +280,49 @@ func backupAzure(azure, timestamp string) (string, error) {
 	}
 	dest := filepath.Join(backups, "azure-"+timestamp)
 	if err := os.Rename(azure, dest); err != nil {
-		return "", fmt.Errorf("backing up %s to %s: %w", azure, dest, err)
+		// Rename fails across filesystems, which happens when AZSEL_HOME sits
+		// on a different volume than $HOME. Fall back to a copy-then-remove so
+		// the feature still works there, just not instantly.
+		if !errors.Is(err, syscall.EXDEV) {
+			return "", fmt.Errorf("backing up %s to %s: %w", azure, dest, err)
+		}
+		if err := os.CopyFS(dest, os.DirFS(azure)); err != nil {
+			return "", fmt.Errorf("copying %s to %s: %w", azure, dest, err)
+		}
+		if err := os.RemoveAll(azure); err != nil {
+			return "", fmt.Errorf("removing %s after backup: %w", azure, err)
+		}
 	}
 	return dest, nil
+}
+
+// DefaultLinkTarget returns the absolute target of the ~/.azure symlink, or ""
+// when ~/.azure is not a symlink. Unlike ResolveDefault it does not require
+// the target to exist, so it answers "does this link point here?" for a
+// dangling link too — which is what remove needs to avoid leaving a dangle.
+func DefaultLinkTarget() (string, error) {
+	azure, err := AzureDir()
+	if err != nil {
+		return "", err
+	}
+	fi, err := os.Lstat(azure)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		return "", nil
+	}
+	target, err := os.Readlink(azure)
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(azure), target)
+	}
+	return target, nil
 }
 
 // latestBackup returns the most recent azure-* backup, or an error if none.

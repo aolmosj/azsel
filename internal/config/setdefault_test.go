@@ -342,3 +342,43 @@ func TestClearReportsNewestOfSeveralBackups(t *testing.T) {
 		t.Errorf("LatestBackup = %q, quería el más reciente", filepath.Base(res.LatestBackup))
 	}
 }
+
+// Bug del review: si EnsureSharedExtensionsLink falla, ~/.azure no debe haber
+// sido ya movido a backup. El enlace de extensiones va antes de tocar
+// ~/.azure, así que un fallo suyo deja ~/.azure intacto.
+func TestSetDefaultDoesNotBackUpIfExtensionsLinkFails(t *testing.T) {
+	home, cfg := azureSandbox(t, "contoso")
+	azure := filepath.Join(home, ".azure")
+	if err := os.MkdirAll(azure, 0755); err != nil {
+		t.Fatalf("preparando: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(azure, "tok"), []byte("sesión"), 0600); err != nil {
+		t.Fatalf("preparando: %v", err)
+	}
+	// Forzamos el fallo de EnsureSharedExtensionsLink: un fichero donde debería
+	// ir el directorio compartido de extensiones hace fallar su creación.
+	extPath := filepath.Join(home, ".azsel", "extensions")
+	_ = os.RemoveAll(extPath)
+	if err := os.WriteFile(extPath, nil, 0644); err != nil {
+		t.Fatalf("preparando: %v", err)
+	}
+
+	if _, err := config.SetDefault(cfg, "contoso", "20260220-120000"); err == nil {
+		t.Fatal("SetDefault no falló pese al error de extensiones")
+	}
+	// ~/.azure sigue siendo el directorio real, no un enlace ni desaparecido.
+	fi, err := os.Lstat(azure)
+	if err != nil {
+		t.Fatalf("~/.azure desapareció pese al fallo: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		t.Error("~/.azure se convirtió en enlace pese al fallo de extensiones")
+	}
+	if _, err := os.Stat(filepath.Join(azure, "tok")); err != nil {
+		t.Error("el contenido de ~/.azure no sobrevivió: la sesión se movió sin enlace nuevo")
+	}
+	// Y no debe haber quedado un backup.
+	if entries, _ := os.ReadDir(filepath.Join(home, ".azsel", "backups")); len(entries) > 0 {
+		t.Error("se creó un backup pese a que la operación falló")
+	}
+}
