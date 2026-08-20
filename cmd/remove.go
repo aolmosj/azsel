@@ -40,6 +40,21 @@ func newRemoveCmd() *cobra.Command {
 			}
 
 			configDir := tenant.ConfigDir
+
+			// If this tenant is the default, drop the ~/.azure link before
+			// anything else. Removing the directory first would leave the
+			// link dangling, and az fails hard on a dangling ~/.azure. This
+			// has to happen while the tenant is still in the config, or
+			// ClearDefault would read the link as one it does not own and
+			// refuse to touch it.
+			if info, err := config.ResolveDefault(cfg); err == nil &&
+				info.State == config.DefaultSet && strings.EqualFold(info.Tenant, name) {
+				if _, err := config.ClearDefault(cfg); err != nil {
+					return fmt.Errorf("clearing default before removal: %w", err)
+				}
+				fmt.Fprintf(os.Stderr, "Cleared default (was %q).\n", name)
+			}
+
 			if err := cfg.RemoveTenant(name); err != nil {
 				return err
 			}

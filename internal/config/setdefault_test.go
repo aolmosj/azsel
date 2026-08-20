@@ -266,3 +266,79 @@ func itoa(n int) string {
 	}
 	return string(b)
 }
+
+func TestClearDefaultRefusesForeign(t *testing.T) {
+	home, cfg := azureSandbox(t)
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(home, ".azure")); err != nil {
+		t.Fatalf("preparando: %v", err)
+	}
+	if _, err := config.ClearDefault(cfg); err == nil {
+		t.Fatal("ClearDefault tocó un enlace ajeno")
+	}
+}
+
+func TestClearDefaultRemovesOwnBrokenLink(t *testing.T) {
+	home, cfg := azureSandbox(t, "contoso")
+	gone := cfg.FindTenant("contoso").ConfigDir
+	if err := os.Symlink(gone, filepath.Join(home, ".azure")); err != nil {
+		t.Fatalf("preparando: %v", err)
+	}
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatalf("preparando: %v", err)
+	}
+	res, err := config.ClearDefault(cfg)
+	if err != nil {
+		t.Fatalf("ClearDefault sobre enlace roto propio: %v", err)
+	}
+	if !res.Cleared {
+		t.Error("no se limpió un enlace roto que era nuestro")
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".azure")); !os.IsNotExist(err) {
+		t.Error("el enlace roto sigue ahí")
+	}
+}
+
+// clear NO debe limpiar un enlace roto ajeno.
+func TestClearDefaultLeavesForeignBrokenLink(t *testing.T) {
+	home, cfg := azureSandbox(t)
+	outside := filepath.Join(t.TempDir(), "no-existe")
+	if err := os.Symlink(outside, filepath.Join(home, ".azure")); err != nil {
+		t.Fatalf("preparando: %v", err)
+	}
+	res, err := config.ClearDefault(cfg)
+	if err != nil {
+		t.Fatalf("ClearDefault: %v", err)
+	}
+	if res.Cleared {
+		t.Error("se limpió un enlace roto ajeno")
+	}
+}
+
+// El backup reportado es el más reciente cuando hay varios.
+func TestClearReportsNewestOfSeveralBackups(t *testing.T) {
+	home, cfg := azureSandbox(t, "contoso")
+	backups := filepath.Join(home, ".azsel", "backups")
+	if err := os.MkdirAll(backups, 0700); err != nil {
+		t.Fatalf("preparando: %v", err)
+	}
+	for _, name := range []string{"azure-20260101-000000", "azure-20260115-000000"} {
+		if err := os.MkdirAll(filepath.Join(backups, name), 0700); err != nil {
+			t.Fatalf("preparando: %v", err)
+		}
+	}
+	// ~/.azure real, para que SetDefault genere un backup con marca posterior.
+	if err := os.MkdirAll(filepath.Join(home, ".azure"), 0755); err != nil {
+		t.Fatalf("preparando: %v", err)
+	}
+	if _, err := config.SetDefault(cfg, "contoso", "20260220-120001"); err != nil {
+		t.Fatalf("SetDefault: %v", err)
+	}
+	res, err := config.ClearDefault(cfg)
+	if err != nil {
+		t.Fatalf("ClearDefault: %v", err)
+	}
+	if filepath.Base(res.LatestBackup) != "azure-20260220-120001" {
+		t.Errorf("LatestBackup = %q, quería el más reciente", filepath.Base(res.LatestBackup))
+	}
+}
