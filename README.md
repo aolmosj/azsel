@@ -204,18 +204,21 @@ $ azsel
 ```
   Azure Tenants
 
-  * contoso
-    xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+   D contoso
+     xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
-    fabrikam
-    yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy
+  *  fabrikam
+     yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy
 
-  enter: activate  /: filter  q: quit
+  enter: activate  d: set default  /: filter  q: quit
 ```
+
+`*` marks the active tenant (this shell), `D` the default tenant (new shells). They can be different tenants, as above.
 
 - Use arrow keys (`↑`/`↓`) or `j`/`k` to navigate
 - Press `/` to fuzzy-search by tenant name or ID
 - Press `Enter` to activate the selected tenant
+- Press `d` to make the selected tenant the default (asks first, since it repoints `~/.azure`)
 - Press `q` or `Ctrl+C` to quit without changing anything
 
 ### Remove a tenant
