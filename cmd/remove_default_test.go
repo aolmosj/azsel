@@ -76,3 +76,27 @@ func TestRemoveNonDefaultTenantLeavesLink(t *testing.T) {
 		t.Errorf("~/.azure -> %q, quería %q", got, want)
 	}
 }
+
+// Bug del review: si el enlace del default ya está roto (el tenant borrado a
+// mano) y luego se hace `azsel remove`, el enlace quedaba colgando porque el
+// guard solo miraba DefaultSet, no DefaultBroken.
+func TestRemoveTenantWithAlreadyBrokenDefaultLink(t *testing.T) {
+	home, cfg := removeSandbox(t, "contoso")
+	if _, err := config.SetDefault(cfg, "contoso", "20260220-120000"); err != nil {
+		t.Fatalf("SetDefault: %v", err)
+	}
+	// Rompemos el enlace borrando el directorio del tenant a mano — ahora
+	// ~/.azure es un enlace colgando hacia contoso.
+	if err := os.RemoveAll(filepath.Join(home, ".azsel", "tenants", "contoso")); err != nil {
+		t.Fatalf("preparando: %v", err)
+	}
+	quiet(t)
+
+	if err := run(t, newRemoveCmd(), "contoso", "-f"); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	// El enlace roto no debe sobrevivir a la eliminación.
+	if _, err := os.Lstat(filepath.Join(home, ".azure")); !os.IsNotExist(err) {
+		t.Errorf("~/.azure sigue existiendo (colgando) tras borrar el tenant (err=%v)", err)
+	}
+}

@@ -14,10 +14,11 @@ type Model struct {
 	selected *config.Tenant
 	quitting bool
 
-	// setDefault persists a tenant as the default. Injected so the model
-	// stays free of config and clock: cmd/tui.go closes over both. Nil
-	// disables the "d" key.
-	setDefault func(name string) error
+	// setDefault persists a tenant as the default and returns a note to show
+	// (e.g. where an existing ~/.azure was backed up), empty if none. Injected
+	// so the model stays free of config and clock: cmd/tui.go closes over
+	// both. Nil disables the "d" key.
+	setDefault func(name string) (note string, err error)
 
 	// Confirmation state for the "d" key. Setting a default rewrites
 	// ~/.azure, which is more consequential than anything else the TUI does,
@@ -27,7 +28,7 @@ type Model struct {
 	status      string
 }
 
-func NewModel(tenants []config.Tenant, currentConfigDir, defaultName string, setDefault func(name string) error) Model {
+func NewModel(tenants []config.Tenant, currentConfigDir, defaultName string, setDefault func(name string) (string, error)) Model {
 	items := make([]list.Item, len(tenants))
 	for i, t := range tenants {
 		active := t.ConfigDir == currentConfigDir
@@ -80,11 +81,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "y", "Y":
 				m.confirming = false
-				if err := m.setDefault(m.confirmName); err != nil {
+				if note, err := m.setDefault(m.confirmName); err != nil {
 					m.status = "Could not set default: " + err.Error()
 				} else {
 					m.applyDefault(m.confirmName)
 					m.status = "Default is now " + m.confirmName + "."
+					if note != "" {
+						m.status += " " + note
+					}
 				}
 			default:
 				m.confirming = false

@@ -29,10 +29,16 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	if def, err := config.ResolveDefault(cfg); err == nil && def.State == config.DefaultSet {
 		defaultName = def.Tenant
 	}
-	setDefault := func(name string) error {
+	setDefault := func(name string) (string, error) {
 		stamp := time.Now().Format("20060102-150405")
-		_, err := config.SetDefault(cfg, name, stamp)
-		return err
+		res, err := config.SetDefault(cfg, name, stamp)
+		if err != nil {
+			return "", err
+		}
+		if res.BackupPath != "" {
+			return "Moved your existing ~/.azure to " + res.BackupPath, nil
+		}
+		return "", nil
 	}
 	model := tui.NewModel(cfg.Tenants, currentDir, defaultName, setDefault)
 

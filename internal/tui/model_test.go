@@ -416,7 +416,7 @@ func TestDelegateRendersDefaultMarker(t *testing.T) {
 func TestSetDefaultKeyAsksConfirmation(t *testing.T) {
 	ts := tenants()
 	var called []string
-	set := func(name string) error { called = append(called, name); return nil }
+	set := func(name string) (string, error) { called = append(called, name); return "", nil }
 	m := NewModel(ts, "", "", set)
 
 	// d sobre el primer item entra en confirmación, sin fijar aún.
@@ -441,7 +441,7 @@ func TestSetDefaultKeyAsksConfirmation(t *testing.T) {
 func TestSetDefaultKeyCancelled(t *testing.T) {
 	ts := tenants()
 	var called []string
-	set := func(name string) error { called = append(called, name); return nil }
+	set := func(name string) (string, error) { called = append(called, name); return "", nil }
 	m := NewModel(ts, "", "", set)
 
 	m, _ = send(t, m, keyMsg("d"))
@@ -457,7 +457,7 @@ func TestSetDefaultKeyCancelled(t *testing.T) {
 // Un error al fijar se muestra, no se traga.
 func TestSetDefaultKeyReportsError(t *testing.T) {
 	ts := tenants()
-	set := func(name string) error { return errTest }
+	set := func(name string) (string, error) { return "", errTest }
 	m := NewModel(ts, "", "", set)
 	m, _ = send(t, m, keyMsg("d"))
 	m, _ = send(t, m, keyMsg("y"))
@@ -480,7 +480,7 @@ func TestSetDefaultKeyNoopWithoutCallback(t *testing.T) {
 func TestSetDefaultKeyIsTextWhileFiltering(t *testing.T) {
 	ts := tenants()
 	var called []string
-	set := func(name string) error { called = append(called, name); return nil }
+	set := func(name string) (string, error) { called = append(called, name); return "", nil }
 	m := NewModel(ts, "", "", set)
 
 	m, _ = send(t, m, keyMsg("/"))
