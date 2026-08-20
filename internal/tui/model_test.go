@@ -45,7 +45,7 @@ func send(t *testing.T, m Model, msgs ...tea.Msg) (Model, tea.Cmd) {
 // guarda en ningún sitio, lo que permite que cada terminal tenga el suyo.
 func TestNewModelMarksActiveTenant(t *testing.T) {
 	ts := tenants()
-	m := NewModel(ts, ts[1].ConfigDir)
+	m := NewModel(ts, ts[1].ConfigDir, "")
 
 	items := m.list.Items()
 	if len(items) != 2 {
@@ -61,7 +61,7 @@ func TestNewModelMarksActiveTenant(t *testing.T) {
 
 func TestNewModelNoActiveTenant(t *testing.T) {
 	for _, dir := range []string{"", "/otro/sitio"} {
-		m := NewModel(tenants(), dir)
+		m := NewModel(tenants(), dir, "")
 		for _, it := range m.list.Items() {
 			if it.(TenantItem).active {
 				t.Errorf("con AZURE_CONFIG_DIR=%q hay un tenant marcado activo", dir)
@@ -71,7 +71,7 @@ func TestNewModelNoActiveTenant(t *testing.T) {
 }
 
 func TestSelectedIsNilUntilChosen(t *testing.T) {
-	m := NewModel(tenants(), "")
+	m := NewModel(tenants(), "", "")
 	if got := m.Selected(); got != nil {
 		t.Errorf("Selected() = %+v antes de elegir, quería nil", got)
 	}
@@ -79,8 +79,8 @@ func TestSelectedIsNilUntilChosen(t *testing.T) {
 
 func TestSelectTenantMsgSetsSelection(t *testing.T) {
 	ts := tenants()
-	m := NewModel(ts, "")
-	m, _ = send(t, m, selectTenantMsg{tenant: NewTenantItem(ts[1], false)})
+	m := NewModel(ts, "", "")
+	m, _ = send(t, m, selectTenantMsg{tenant: NewTenantItem(ts[1], false, false)})
 
 	got := m.Selected()
 	if got == nil {
@@ -98,7 +98,7 @@ func TestSelectTenantMsgSetsSelection(t *testing.T) {
 // Pulsar enter sobre un item debe emitir selectTenantMsg. Es el delegate quien
 // lo produce, no el modelo.
 func TestEnterEmitsSelectTenantMsg(t *testing.T) {
-	m := NewModel(tenants(), "")
+	m := NewModel(tenants(), "", "")
 	_, cmd := send(t, m, keyMsg("enter"))
 	if cmd == nil {
 		t.Fatal("enter no emitió ningún comando")
@@ -110,7 +110,7 @@ func TestEnterEmitsSelectTenantMsg(t *testing.T) {
 
 func TestQuitKeys(t *testing.T) {
 	for _, k := range []tea.KeyMsg{keyMsg("q"), {Type: tea.KeyCtrlC}} {
-		m := NewModel(tenants(), "")
+		m := NewModel(tenants(), "", "")
 		m, _ = send(t, m, k)
 		if v := m.View(); v != "" {
 			t.Errorf("tras %v, View() = %q, quería vacío", k, v)
@@ -124,7 +124,7 @@ func TestQuitKeys(t *testing.T) {
 // Protege la guarda de Update: mientras se filtra, «q» es texto de búsqueda,
 // no la orden de salir. Sin ella, buscar «quux» cerraría la aplicación.
 func TestQuitKeyIsTextWhileFiltering(t *testing.T) {
-	m := NewModel(tenants(), "")
+	m := NewModel(tenants(), "", "")
 	m, _ = send(t, m, keyMsg("/"))
 	if m.list.FilterState() != list.Filtering {
 		t.Fatalf("«/» no entró en modo filtro: estado = %v", m.list.FilterState())
@@ -141,7 +141,7 @@ func TestQuitKeyIsTextWhileFiltering(t *testing.T) {
 
 // El filtro busca por nombre y por ID: pegar un GUID debe encontrar su tenant.
 func TestFilterValueCoversNameAndID(t *testing.T) {
-	item := NewTenantItem(tenants()[0], false)
+	item := NewTenantItem(tenants()[0], false, false)
 	got := item.FilterValue()
 	if !strings.Contains(got, "acme") {
 		t.Errorf("FilterValue() = %q, quería que incluyera el nombre", got)
@@ -152,7 +152,7 @@ func TestFilterValueCoversNameAndID(t *testing.T) {
 }
 
 func TestWindowSizeMsgResizesList(t *testing.T) {
-	m := NewModel(tenants(), "")
+	m := NewModel(tenants(), "", "")
 	m, _ = send(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	if w := m.list.Width(); w >= 120 {
 		t.Errorf("ancho de la lista = %d, quería descontar el margen de 120", w)
@@ -165,7 +165,7 @@ func TestWindowSizeMsgResizesList(t *testing.T) {
 // El delegate pinta dos líneas por tenant, nombre e ID, y marca el activo.
 func TestDelegateRender(t *testing.T) {
 	ts := tenants()
-	m := NewModel(ts, ts[0].ConfigDir)
+	m := NewModel(ts, ts[0].ConfigDir, "")
 	d := newDelegate()
 
 	if got := d.Height(); got != 2 {
@@ -198,11 +198,11 @@ func TestDelegateRender(t *testing.T) {
 func TestMarker(t *testing.T) {
 	ts := tenants()
 
-	active := NewTenantItem(ts[0], true).marker()
+	active := NewTenantItem(ts[0], true, false).marker()
 	if !strings.Contains(active, "*") {
 		t.Errorf("marcador activo = %q, quería que incluyera «*»", active)
 	}
-	inactive := NewTenantItem(ts[0], false).marker()
+	inactive := NewTenantItem(ts[0], false, false).marker()
 	if strings.Contains(inactive, "*") {
 		t.Errorf("marcador inactivo = %q, no quería «*»", inactive)
 	}
@@ -221,7 +221,7 @@ func TestMarker(t *testing.T) {
 // tal cual.
 func TestDelegateRenderShowsSameDataSelectedOrNot(t *testing.T) {
 	ts := tenants()
-	m := NewModel(ts, "")
+	m := NewModel(ts, "", "")
 	d := newDelegate()
 
 	var selected, normal bytes.Buffer
@@ -260,7 +260,7 @@ func helpKeys(m Model) []string {
 // de cursor y su propio KeyMap, que ya aporta Filter y Quit. Declararlas
 // también en el delegate las imprimía dos veces.
 func TestHelpHasNoDuplicateKeys(t *testing.T) {
-	m := NewModel(tenants(), "")
+	m := NewModel(tenants(), "", "")
 
 	seen := map[string]int{}
 	for _, k := range helpKeys(m) {
@@ -276,7 +276,7 @@ func TestHelpHasNoDuplicateKeys(t *testing.T) {
 // El delegate solo debe aportar lo que el list no sabe. enter lo maneja él;
 // «/» y «q» las pone el list por su cuenta.
 func TestHelpContentsAreComplete(t *testing.T) {
-	m := NewModel(tenants(), "")
+	m := NewModel(tenants(), "", "")
 	keys := helpKeys(m)
 
 	has := func(want string) bool {
@@ -301,7 +301,7 @@ func TestHelpContentsAreComplete(t *testing.T) {
 // Con el filtro abierto la barra cambia de forma: el list omite el ShortHelp
 // del delegate. Tampoco ahí debe haber repeticiones.
 func TestHelpHasNoDuplicateKeysWhileFiltering(t *testing.T) {
-	m := NewModel(tenants(), "")
+	m := NewModel(tenants(), "", "")
 	m, _ = send(t, m, keyMsg("/"))
 	if m.list.FilterState() != list.Filtering {
 		t.Fatalf("no se entró en modo filtro: %v", m.list.FilterState())
@@ -320,7 +320,7 @@ func TestHelpHasNoDuplicateKeysWhileFiltering(t *testing.T) {
 
 // Y la comprobación de extremo a extremo, sobre lo que el usuario ve.
 func TestRenderedHelpHasNoRepeatedEntries(t *testing.T) {
-	m := NewModel(tenants(), "")
+	m := NewModel(tenants(), "", "")
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 14})
 	view := ansi.Strip(updated.(Model).View())
 
@@ -328,5 +328,76 @@ func TestRenderedHelpHasNoRepeatedEntries(t *testing.T) {
 		if got := strings.Count(view, entry); got != 1 {
 			t.Errorf("%q aparece %d veces en la vista, quería 1:\n%s", entry, got, view)
 		}
+	}
+}
+
+// El marcador distingue las cuatro combinaciones de activo y default, y
+// mantiene dos columnas en todas para que los nombres queden alineados.
+func TestMarkerDefaultAndActive(t *testing.T) {
+	ts := tenants()
+	cases := []struct {
+		name            string
+		active, isDef   bool
+		wantStar, wantD bool
+	}{
+		{"ninguno", false, false, false, false},
+		{"solo activo", true, false, true, false},
+		{"solo default", false, true, false, true},
+		{"ambos", true, true, true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := ansi.Strip(NewTenantItem(ts[0], c.active, c.isDef).marker())
+			if strings.Contains(m, "*") != c.wantStar {
+				t.Errorf("marcador %q: presencia de «*» = %v, quería %v", m, strings.Contains(m, "*"), c.wantStar)
+			}
+			if strings.Contains(m, "D") != c.wantD {
+				t.Errorf("marcador %q: presencia de «D» = %v, quería %v", m, strings.Contains(m, "D"), c.wantD)
+			}
+			if len(m) != 2 {
+				t.Errorf("marcador %q mide %d columnas, quería 2", m, len(m))
+			}
+		})
+	}
+}
+
+// NewModel marca como default el tenant cuyo nombre coincide, sin distinguir
+// mayúsculas, y ninguno si el nombre está vacío.
+func TestNewModelMarksDefault(t *testing.T) {
+	ts := tenants() // acme, globex
+	m := NewModel(ts, "", "GLOBEX")
+	items := m.list.Items()
+	if items[0].(TenantItem).isDefault {
+		t.Error("acme marcado como default")
+	}
+	if !items[1].(TenantItem).isDefault {
+		t.Error("globex no marcado como default pese a coincidir (case-insensitive)")
+	}
+
+	none := NewModel(ts, "", "")
+	for _, it := range none.list.Items() {
+		if it.(TenantItem).isDefault {
+			t.Error("hay un default marcado con defaultName vacío")
+		}
+	}
+}
+
+// Activo y default son independientes: el render los muestra a la vez cuando
+// coinciden en el mismo tenant, y por separado cuando no.
+func TestDelegateRendersDefaultMarker(t *testing.T) {
+	ts := tenants()
+	// acme activo, globex default.
+	m := NewModel(ts, ts[0].ConfigDir, "globex")
+	d := newDelegate()
+
+	var acme, globex bytes.Buffer
+	d.Render(&acme, m.list, 0, m.list.Items()[0])
+	d.Render(&globex, m.list, 1, m.list.Items()[1])
+
+	if a := ansi.Strip(acme.String()); !strings.Contains(a, "*") || strings.Contains(a[:3], "D") {
+		t.Errorf("acme debería ser activo y no default: %q", a)
+	}
+	if g := ansi.Strip(globex.String()); !strings.Contains(g[:3], "D") {
+		t.Errorf("globex debería mostrar el marcador de default: %q", g)
 	}
 }

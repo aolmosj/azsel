@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	"github.com/aolmosj/azsel/internal/config"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,11 +15,12 @@ type Model struct {
 	quitting bool
 }
 
-func NewModel(tenants []config.Tenant, currentConfigDir string) Model {
+func NewModel(tenants []config.Tenant, currentConfigDir, defaultName string) Model {
 	items := make([]list.Item, len(tenants))
 	for i, t := range tenants {
 		active := t.ConfigDir == currentConfigDir
-		items[i] = NewTenantItem(t, active)
+		isDefault := defaultName != "" && strings.EqualFold(t.Name, defaultName)
+		items[i] = NewTenantItem(t, active, isDefault)
 	}
 
 	delegate := newDelegate()

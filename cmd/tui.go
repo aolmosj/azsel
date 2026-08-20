@@ -21,7 +21,14 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	}
 
 	currentDir := os.Getenv("AZURE_CONFIG_DIR")
-	model := tui.NewModel(cfg.Tenants, currentDir)
+	// The default is a filesystem fact (the ~/.azure symlink); resolving it
+	// can fail on a genuinely broken filesystem, in which case the TUI simply
+	// shows no default marker rather than refusing to open.
+	defaultName := ""
+	if def, err := config.ResolveDefault(cfg); err == nil && def.State == config.DefaultSet {
+		defaultName = def.Tenant
+	}
+	model := tui.NewModel(cfg.Tenants, currentDir, defaultName)
 
 	p := tea.NewProgram(model, tea.WithOutput(os.Stderr))
 	finalModel, err := p.Run()
