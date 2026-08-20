@@ -45,6 +45,25 @@ jobs:
 
       - run: go test -race ./...
 
+  integration:
+    name: Integration (real az)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # GitHub's Linux runners ship the Azure CLI. Assert it rather than
+      # assume it, so a runner image that drops az turns this job red instead
+      # of skipping the tests silently.
+      - name: Assert az is present
+        run: az version --output none
+
+      - name: Integration tests
+        run: AZSEL_INTEGRATION=1 go test -run TestIntegration ./internal/config/
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

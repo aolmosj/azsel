@@ -299,6 +299,12 @@ The suite needs neither Azure nor network access. Tests that touch configuration
 go test -race -cover ./...   # what CI runs
 ```
 
+A few tests exercise the real Azure CLI to pin how `az` resolves the default `~/.azure` symlink. They are opt-in so the default suite stays hermetic (no `az`, no network); run them with:
+
+```bash
+AZSEL_INTEGRATION=1 go test ./internal/config/
+```
+
 ### Build and verify
 
 ```bash
