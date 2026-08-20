@@ -85,10 +85,18 @@ func TestLoginScopesTheEnvironment(t *testing.T) {
 	if v, ok := envValue(got.cmd, "AZURE_CONFIG_DIR"); !ok || v != "/cfg/acme" {
 		t.Errorf("AZURE_CONFIG_DIR = %q (presente=%v), quería «/cfg/acme»", v, ok)
 	}
-	// AZURE_EXTENSION_DIR ya no se inyecta: las extensiones se comparten vía
-	// el symlink cliextensions del tenant.
-	if _, ok := envValue(got.cmd, "AZURE_EXTENSION_DIR"); ok {
-		t.Error("AZURE_EXTENSION_DIR sigue inyectándose; debía retirarse")
+
+	// azsel debe añadir EXACTAMENTE una variable al entorno heredado:
+	// AZURE_CONFIG_DIR. Comprobar "AZURE_EXTENSION_DIR ausente" sería falso en
+	// un runner que ya la trae exportada (el de Linux lo hace) — lo que
+	// importa es que azsel no la ponga. command() hace append sobre
+	// os.Environ(), así que lo añadido es la cola tras esa longitud.
+	added := got.cmd.Env[len(os.Environ()):]
+	if len(added) != 1 {
+		t.Fatalf("azsel añadió %d variables, quería 1: %v", len(added), added)
+	}
+	if !strings.HasPrefix(added[0], "AZURE_CONFIG_DIR=") {
+		t.Errorf("azsel añadió %q, quería solo AZURE_CONFIG_DIR", added[0])
 	}
 
 	// El resto del entorno se hereda: az necesita proxy, locale, HOME...
