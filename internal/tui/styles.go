@@ -20,6 +20,11 @@ var (
 			Foreground(green).
 			Bold(true)
 
+	// The default tenant, distinct from the active one, in Azure blue.
+	defaultStyle = lipgloss.NewStyle().
+			Foreground(azureBlue).
+			Bold(true)
+
 	// Selected item in list
 	selectedTitleStyle = lipgloss.NewStyle().
 				Foreground(azureBlue).
