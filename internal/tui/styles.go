@@ -53,5 +53,13 @@ var (
 			Background(azureBlue).
 			Padding(0, 1)
 
+	confirmStyle = lipgloss.NewStyle().
+			Foreground(white).
+			Background(azureBlue).
+			Padding(0, 1)
+
+	statusMsgStyle = lipgloss.NewStyle().
+			Foreground(azureLight)
+
 	appStyle = lipgloss.NewStyle().Margin(1, 2)
 )

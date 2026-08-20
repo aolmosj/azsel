@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/aolmosj/azsel/internal/config"
 	"github.com/aolmosj/azsel/internal/tui"
@@ -28,7 +29,12 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	if def, err := config.ResolveDefault(cfg); err == nil && def.State == config.DefaultSet {
 		defaultName = def.Tenant
 	}
-	model := tui.NewModel(cfg.Tenants, currentDir, defaultName)
+	setDefault := func(name string) error {
+		stamp := time.Now().Format("20060102-150405")
+		_, err := config.SetDefault(cfg, name, stamp)
+		return err
+	}
+	model := tui.NewModel(cfg.Tenants, currentDir, defaultName, setDefault)
 
 	p := tea.NewProgram(model, tea.WithOutput(os.Stderr))
 	finalModel, err := p.Run()

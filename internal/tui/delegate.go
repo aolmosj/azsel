@@ -66,6 +66,7 @@ func (d tenantDelegate) Render(w io.Writer, m list.Model, index int, listItem li
 func (d tenantDelegate) ShortHelp() []key.Binding {
 	return []key.Binding{
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "activate")),
+		key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "set default")),
 	}
 }
 

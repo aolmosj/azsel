@@ -45,7 +45,7 @@ func send(t *testing.T, m Model, msgs ...tea.Msg) (Model, tea.Cmd) {
 // guarda en ningún sitio, lo que permite que cada terminal tenga el suyo.
 func TestNewModelMarksActiveTenant(t *testing.T) {
 	ts := tenants()
-	m := NewModel(ts, ts[1].ConfigDir, "")
+	m := NewModel(ts, ts[1].ConfigDir, "", nil)
 
 	items := m.list.Items()
 	if len(items) != 2 {
@@ -61,7 +61,7 @@ func TestNewModelMarksActiveTenant(t *testing.T) {
 
 func TestNewModelNoActiveTenant(t *testing.T) {
 	for _, dir := range []string{"", "/otro/sitio"} {
-		m := NewModel(tenants(), dir, "")
+		m := NewModel(tenants(), dir, "", nil)
 		for _, it := range m.list.Items() {
 			if it.(TenantItem).active {
 				t.Errorf("con AZURE_CONFIG_DIR=%q hay un tenant marcado activo", dir)
@@ -71,7 +71,7 @@ func TestNewModelNoActiveTenant(t *testing.T) {
 }
 
 func TestSelectedIsNilUntilChosen(t *testing.T) {
-	m := NewModel(tenants(), "", "")
+	m := NewModel(tenants(), "", "", nil)
 	if got := m.Selected(); got != nil {
 		t.Errorf("Selected() = %+v antes de elegir, quería nil", got)
 	}
@@ -79,7 +79,7 @@ func TestSelectedIsNilUntilChosen(t *testing.T) {
 
 func TestSelectTenantMsgSetsSelection(t *testing.T) {
 	ts := tenants()
-	m := NewModel(ts, "", "")
+	m := NewModel(ts, "", "", nil)
 	m, _ = send(t, m, selectTenantMsg{tenant: NewTenantItem(ts[1], false, false)})
 
 	got := m.Selected()
@@ -98,7 +98,7 @@ func TestSelectTenantMsgSetsSelection(t *testing.T) {
 // Pulsar enter sobre un item debe emitir selectTenantMsg. Es el delegate quien
 // lo produce, no el modelo.
 func TestEnterEmitsSelectTenantMsg(t *testing.T) {
-	m := NewModel(tenants(), "", "")
+	m := NewModel(tenants(), "", "", nil)
 	_, cmd := send(t, m, keyMsg("enter"))
 	if cmd == nil {
 		t.Fatal("enter no emitió ningún comando")
@@ -110,7 +110,7 @@ func TestEnterEmitsSelectTenantMsg(t *testing.T) {
 
 func TestQuitKeys(t *testing.T) {
 	for _, k := range []tea.KeyMsg{keyMsg("q"), {Type: tea.KeyCtrlC}} {
-		m := NewModel(tenants(), "", "")
+		m := NewModel(tenants(), "", "", nil)
 		m, _ = send(t, m, k)
 		if v := m.View(); v != "" {
 			t.Errorf("tras %v, View() = %q, quería vacío", k, v)
@@ -124,7 +124,7 @@ func TestQuitKeys(t *testing.T) {
 // Protege la guarda de Update: mientras se filtra, «q» es texto de búsqueda,
 // no la orden de salir. Sin ella, buscar «quux» cerraría la aplicación.
 func TestQuitKeyIsTextWhileFiltering(t *testing.T) {
-	m := NewModel(tenants(), "", "")
+	m := NewModel(tenants(), "", "", nil)
 	m, _ = send(t, m, keyMsg("/"))
 	if m.list.FilterState() != list.Filtering {
 		t.Fatalf("«/» no entró en modo filtro: estado = %v", m.list.FilterState())
@@ -152,7 +152,7 @@ func TestFilterValueCoversNameAndID(t *testing.T) {
 }
 
 func TestWindowSizeMsgResizesList(t *testing.T) {
-	m := NewModel(tenants(), "", "")
+	m := NewModel(tenants(), "", "", nil)
 	m, _ = send(t, m, tea.WindowSizeMsg{Width: 120, Height: 40})
 	if w := m.list.Width(); w >= 120 {
 		t.Errorf("ancho de la lista = %d, quería descontar el margen de 120", w)
@@ -165,7 +165,7 @@ func TestWindowSizeMsgResizesList(t *testing.T) {
 // El delegate pinta dos líneas por tenant, nombre e ID, y marca el activo.
 func TestDelegateRender(t *testing.T) {
 	ts := tenants()
-	m := NewModel(ts, ts[0].ConfigDir, "")
+	m := NewModel(ts, ts[0].ConfigDir, "", nil)
 	d := newDelegate()
 
 	if got := d.Height(); got != 2 {
@@ -221,7 +221,7 @@ func TestMarker(t *testing.T) {
 // tal cual.
 func TestDelegateRenderShowsSameDataSelectedOrNot(t *testing.T) {
 	ts := tenants()
-	m := NewModel(ts, "", "")
+	m := NewModel(ts, "", "", nil)
 	d := newDelegate()
 
 	var selected, normal bytes.Buffer
@@ -260,7 +260,7 @@ func helpKeys(m Model) []string {
 // de cursor y su propio KeyMap, que ya aporta Filter y Quit. Declararlas
 // también en el delegate las imprimía dos veces.
 func TestHelpHasNoDuplicateKeys(t *testing.T) {
-	m := NewModel(tenants(), "", "")
+	m := NewModel(tenants(), "", "", nil)
 
 	seen := map[string]int{}
 	for _, k := range helpKeys(m) {
@@ -276,7 +276,7 @@ func TestHelpHasNoDuplicateKeys(t *testing.T) {
 // El delegate solo debe aportar lo que el list no sabe. enter lo maneja él;
 // «/» y «q» las pone el list por su cuenta.
 func TestHelpContentsAreComplete(t *testing.T) {
-	m := NewModel(tenants(), "", "")
+	m := NewModel(tenants(), "", "", nil)
 	keys := helpKeys(m)
 
 	has := func(want string) bool {
@@ -293,15 +293,24 @@ func TestHelpContentsAreComplete(t *testing.T) {
 		}
 	}
 
-	if got := newDelegate().ShortHelp(); len(got) != 1 {
-		t.Errorf("el delegate declara %d bindings, quería 1 (solo enter)", len(got))
+	// El delegate declara solo las teclas que el list no conoce: enter y d.
+	// «/» y «q» las aporta el list, y no deben repetirse (#21).
+	declared := map[string]bool{}
+	for _, b := range newDelegate().ShortHelp() {
+		declared[b.Help().Key] = true
+	}
+	if !declared["enter"] || !declared["d"] {
+		t.Errorf("el delegate debe declarar enter y d, tiene %v", declared)
+	}
+	if declared["/"] || declared["q"] {
+		t.Errorf("el delegate no debe declarar / ni q (los pone el list): %v", declared)
 	}
 }
 
 // Con el filtro abierto la barra cambia de forma: el list omite el ShortHelp
 // del delegate. Tampoco ahí debe haber repeticiones.
 func TestHelpHasNoDuplicateKeysWhileFiltering(t *testing.T) {
-	m := NewModel(tenants(), "", "")
+	m := NewModel(tenants(), "", "", nil)
 	m, _ = send(t, m, keyMsg("/"))
 	if m.list.FilterState() != list.Filtering {
 		t.Fatalf("no se entró en modo filtro: %v", m.list.FilterState())
@@ -320,7 +329,7 @@ func TestHelpHasNoDuplicateKeysWhileFiltering(t *testing.T) {
 
 // Y la comprobación de extremo a extremo, sobre lo que el usuario ve.
 func TestRenderedHelpHasNoRepeatedEntries(t *testing.T) {
-	m := NewModel(tenants(), "", "")
+	m := NewModel(tenants(), "", "", nil)
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 14})
 	view := ansi.Strip(updated.(Model).View())
 
@@ -365,7 +374,7 @@ func TestMarkerDefaultAndActive(t *testing.T) {
 // mayúsculas, y ninguno si el nombre está vacío.
 func TestNewModelMarksDefault(t *testing.T) {
 	ts := tenants() // acme, globex
-	m := NewModel(ts, "", "GLOBEX")
+	m := NewModel(ts, "", "GLOBEX", nil)
 	items := m.list.Items()
 	if items[0].(TenantItem).isDefault {
 		t.Error("acme marcado como default")
@@ -374,7 +383,7 @@ func TestNewModelMarksDefault(t *testing.T) {
 		t.Error("globex no marcado como default pese a coincidir (case-insensitive)")
 	}
 
-	none := NewModel(ts, "", "")
+	none := NewModel(ts, "", "", nil)
 	for _, it := range none.list.Items() {
 		if it.(TenantItem).isDefault {
 			t.Error("hay un default marcado con defaultName vacío")
@@ -387,7 +396,7 @@ func TestNewModelMarksDefault(t *testing.T) {
 func TestDelegateRendersDefaultMarker(t *testing.T) {
 	ts := tenants()
 	// acme activo, globex default.
-	m := NewModel(ts, ts[0].ConfigDir, "globex")
+	m := NewModel(ts, ts[0].ConfigDir, "globex", nil)
 	d := newDelegate()
 
 	var acme, globex bytes.Buffer
@@ -401,3 +410,94 @@ func TestDelegateRendersDefaultMarker(t *testing.T) {
 		t.Errorf("globex debería mostrar el marcador de default: %q", g)
 	}
 }
+
+// La tecla "d" pide confirmación antes de fijar el default, porque reescribe
+// ~/.azure — la única acción de la TUI con efecto en disco.
+func TestSetDefaultKeyAsksConfirmation(t *testing.T) {
+	ts := tenants()
+	var called []string
+	set := func(name string) error { called = append(called, name); return nil }
+	m := NewModel(ts, "", "", set)
+
+	// d sobre el primer item entra en confirmación, sin fijar aún.
+	m, _ = send(t, m, keyMsg("d"))
+	if !strings.Contains(m.View(), "as the default?") {
+		t.Errorf("d no mostró la confirmación:\n%s", ansi.Strip(m.View()))
+	}
+	if len(called) != 0 {
+		t.Errorf("se fijó el default antes de confirmar: %v", called)
+	}
+
+	// y confirma: se fija y el marcador se actualiza.
+	m, _ = send(t, m, keyMsg("y"))
+	if len(called) != 1 || called[0] != ts[0].Name {
+		t.Fatalf("setDefault llamado con %v, quería [%s]", called, ts[0].Name)
+	}
+	if !m.list.Items()[0].(TenantItem).isDefault {
+		t.Error("el marcador de default no se actualizó tras confirmar")
+	}
+}
+
+func TestSetDefaultKeyCancelled(t *testing.T) {
+	ts := tenants()
+	var called []string
+	set := func(name string) error { called = append(called, name); return nil }
+	m := NewModel(ts, "", "", set)
+
+	m, _ = send(t, m, keyMsg("d"))
+	m, _ = send(t, m, keyMsg("n"))
+	if len(called) != 0 {
+		t.Errorf("n no canceló: se fijó %v", called)
+	}
+	if strings.Contains(m.View(), "as the default?") {
+		t.Error("sigue mostrando la confirmación tras cancelar")
+	}
+}
+
+// Un error al fijar se muestra, no se traga.
+func TestSetDefaultKeyReportsError(t *testing.T) {
+	ts := tenants()
+	set := func(name string) error { return errTest }
+	m := NewModel(ts, "", "", set)
+	m, _ = send(t, m, keyMsg("d"))
+	m, _ = send(t, m, keyMsg("y"))
+	if !strings.Contains(m.View(), "Could not set default") {
+		t.Errorf("no se mostró el error:\n%s", ansi.Strip(m.View()))
+	}
+}
+
+// Sin callback (setDefault nil), la tecla d no hace nada.
+func TestSetDefaultKeyNoopWithoutCallback(t *testing.T) {
+	m := NewModel(tenants(), "", "", nil)
+	m, _ = send(t, m, keyMsg("d"))
+	if strings.Contains(m.View(), "as the default?") {
+		t.Error("d entró en confirmación sin callback")
+	}
+}
+
+// Durante el filtrado, "d" es texto de búsqueda, no la orden de fijar default
+// — la misma guarda que protege a "q" (#7).
+func TestSetDefaultKeyIsTextWhileFiltering(t *testing.T) {
+	ts := tenants()
+	var called []string
+	set := func(name string) error { called = append(called, name); return nil }
+	m := NewModel(ts, "", "", set)
+
+	m, _ = send(t, m, keyMsg("/"))
+	if m.list.FilterState() != list.Filtering {
+		t.Fatalf("no se entró en filtrado")
+	}
+	m, _ = send(t, m, keyMsg("d"))
+	if strings.Contains(m.View(), "as the default?") {
+		t.Error("d abrió la confirmación durante el filtrado")
+	}
+	if len(called) != 0 {
+		t.Errorf("d fijó el default durante el filtrado: %v", called)
+	}
+}
+
+var errTest = &testError{}
+
+type testError struct{}
+
+func (*testError) Error() string { return "boom" }
