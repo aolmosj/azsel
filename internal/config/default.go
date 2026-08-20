@@ -195,7 +195,7 @@ func SetDefault(cfg *Config, name string, timestamp string) (SetResult, error) {
 	// Share extensions through the filesystem: the default is reached via the
 	// link with no AZURE_EXTENSION_DIR, so az would otherwise resolve
 	// extensions inside the tenant. See #26.
-	if err := ensureSharedExtensionsLink(tenant.ConfigDir); err != nil {
+	if err := EnsureSharedExtensionsLink(tenant.ConfigDir); err != nil {
 		return SetResult{}, err
 	}
 
@@ -308,11 +308,11 @@ func latestBackup() (string, error) {
 	return filepath.Join(backups, newest), nil
 }
 
-// ensureSharedExtensionsLink makes the tenant's cliextensions a symlink to the
+// EnsureSharedExtensionsLink makes the tenant's cliextensions a symlink to the
 // shared extensions directory, so extensions resolve to the same place
 // whether the tenant is reached through the default link or through
 // AZURE_EXTENSION_DIR. Idempotent: a correct link already in place is left be.
-func ensureSharedExtensionsLink(tenantDir string) error {
+func EnsureSharedExtensionsLink(tenantDir string) error {
 	shared, err := EnsureExtensionsDir()
 	if err != nil {
 		return err

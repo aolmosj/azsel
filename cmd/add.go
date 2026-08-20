@@ -110,13 +110,17 @@ func newAddCmd() *cobra.Command {
 				}
 			}()
 
-			extDir, err := config.EnsureExtensionsDir()
-			if err != nil {
+			// Share extensions through the filesystem before az runs, so the
+			// login already reads and writes them in the shared directory
+			// (see #26). Reached through the default link there is no
+			// AZURE_EXTENSION_DIR to steer az, so the symlink is what makes
+			// sharing hold however the tenant is later entered.
+			if err := config.EnsureSharedExtensionsLink(configDir); err != nil {
 				return err
 			}
 
 			fmt.Fprintf(os.Stderr, "\nLogging in to tenant %q (%s)...\n", name, tenantID)
-			if err := azure.Login(tenantID, configDir, extDir, useDeviceCode); err != nil {
+			if err := azure.Login(tenantID, configDir, useDeviceCode); err != nil {
 				return fmt.Errorf("az login failed: %w", err)
 			}
 

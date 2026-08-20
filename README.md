@@ -22,7 +22,7 @@ Azure CLI stores its configuration (auth tokens, default subscription, etc.) in 
         └── ...
 ```
 
-Azure CLI extensions are shared across all profiles via a common `~/.azsel/extensions/` directory (using `AZURE_EXTENSION_DIR`), so you only need to install each extension once.
+Azure CLI extensions are shared across all profiles via a common `~/.azsel/extensions/` directory, so you only need to install each extension once. Each tenant's `cliextensions` is a symlink to it, which means az finds the shared extensions through the filesystem no matter how the tenant is reached — you do not have to set `AZURE_EXTENSION_DIR` yourself.
 
 Those directories are created `0700`, and `config.json` is written `0600`. Azure CLI protects its token cache itself, but leaves `azureProfile.json`, `az.sess` and its HTTP cache world-readable, so the directory bit is the only lever `azsel` has over who else on the machine can read them. Directories that already exist keep the permissions they have.
 
@@ -67,7 +67,7 @@ CI runs the test suite on Linux and macOS, exercising the wrapper under both bas
 
 | Dependency | Requirement |
 |---|---|
-| Azure CLI | Any version honouring `AZURE_CONFIG_DIR` and `AZURE_EXTENSION_DIR`. Verified against 2.87.0; the practical floor is older but has not been pinned down |
+| Azure CLI | Any version honouring `AZURE_CONFIG_DIR`. Verified against 2.87.0; the practical floor is older but has not been pinned down |
 | Go | Only needed to build from source. See `go.mod` for the version in force |
 
 ## Installation
@@ -338,7 +338,6 @@ This outputs trace information to stderr showing:
 Switched to tenant "contoso"
 [azsel-debug] sourcing /Users/you/.azsel/.switch.48231
 export AZURE_CONFIG_DIR=/Users/you/.azsel/tenants/contoso
-export AZURE_EXTENSION_DIR=/Users/you/.azsel/extensions
 [azsel-debug] AZURE_CONFIG_DIR=/Users/you/.azsel/tenants/contoso
 ```
 
