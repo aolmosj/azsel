@@ -168,6 +168,31 @@ Tenant                                Name
 yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy  fabrikam
 ```
 
+### Set a default tenant
+
+`azsel use` only changes the tenant in your current shell. To make a tenant the default for **every** new shell — and for anything else that runs `az`, including cron jobs and IDEs — point `~/.azure` at it:
+
+```bash
+$ azsel default contoso
+Default tenant set to "contoso".
+New shells will start on this tenant. Open one to try it,
+or run 'azsel use contoso' to switch this shell now.
+```
+
+This works by making `~/.azure` a symlink to the tenant's profile, so no shell integration is needed for it — a fresh terminal, a script, a scheduled job all pick it up. `azsel use` in a shell still wins over the default for that shell, and a subshell inherits its parent's tenant rather than reverting.
+
+If you already had a real `~/.azure` (an existing `az` session), it is **moved** to a backup under `~/.azsel/backups/`, never deleted:
+
+```bash
+$ azsel default contoso
+Moved your existing ~/.azure to /Users/you/.azsel/backups/azure-20260220-153000
+Default tenant set to "contoso".
+```
+
+Show the current default with `azsel default`, and remove it with `azsel default --clear`, which returns `az` to its own `~/.azure` and tells you where the backup is.
+
+> Changing the default takes effect the next time `az` runs in any shell that has not run `azsel use` — `~/.azure` is resolved fresh each time. Shells where you ran `azsel use` keep their tenant.
+
 ### Switch tenant (interactive TUI)
 
 Run `azsel` with no arguments to launch the interactive selector:
@@ -360,6 +385,9 @@ unset AZSEL_DEBUG
 | `azsel add --device-code` | Add a tenant using device code flow (no browser) |
 | `azsel list` | List all configured tenants |
 | `azsel use <name>` | Activate a tenant by name |
+| `azsel default <name>` | Make a tenant the default for new shells |
+| `azsel default` | Show the current default tenant |
+| `azsel default --clear` | Remove the default |
 | `azsel remove <name>` | Remove a tenant and its config directory |
 | `azsel remove <name> -f` | Remove without confirmation |
 | `azsel --version` | Show the current version |
