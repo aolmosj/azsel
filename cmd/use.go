@@ -25,11 +25,13 @@ func newUseCmd() *cobra.Command {
 			if _, err := os.Stat(tenant.ConfigDir); os.IsNotExist(err) {
 				return fmt.Errorf("config directory %s does not exist — try running 'azsel add' again", tenant.ConfigDir)
 			}
-			extDir, err := config.EnsureExtensionsDir()
-			if err != nil {
+			// Keep the tenant sharing extensions through its cliextensions
+			// symlink. Idempotent and cheap, and it migrates tenants created
+			// before this became a filesystem fact.
+			if err := config.EnsureSharedExtensionsLink(tenant.ConfigDir); err != nil {
 				return err
 			}
-			exports := fmt.Sprintf("export AZURE_CONFIG_DIR=%s\nexport AZURE_EXTENSION_DIR=%s\n", tenant.ConfigDir, extDir)
+			exports := fmt.Sprintf("export AZURE_CONFIG_DIR=%s\n", tenant.ConfigDir)
 			if err := config.WriteEnv(exports); err != nil {
 				return err
 			}

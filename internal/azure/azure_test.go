@@ -65,7 +65,7 @@ func TestLoginArguments(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			got := stubRun(t, nil)
-			if err := Login("TID", "/cfg", "/ext", c.deviceCode); err != nil {
+			if err := Login("TID", "/cfg", c.deviceCode); err != nil {
 				t.Fatalf("Login: %v", err)
 			}
 			if !slices.Equal(got.cmd.Args, c.want) {
@@ -78,17 +78,17 @@ func TestLoginArguments(t *testing.T) {
 // El aislamiento entre tenants depende enteramente de estas dos variables.
 func TestLoginScopesTheEnvironment(t *testing.T) {
 	got := stubRun(t, nil)
-	if err := Login("TID", "/cfg/acme", "/ext", false); err != nil {
+	if err := Login("TID", "/cfg/acme", false); err != nil {
 		t.Fatalf("Login: %v", err)
 	}
 
-	for _, c := range []struct{ key, want string }{
-		{"AZURE_CONFIG_DIR", "/cfg/acme"},
-		{"AZURE_EXTENSION_DIR", "/ext"},
-	} {
-		if v, ok := envValue(got.cmd, c.key); !ok || v != c.want {
-			t.Errorf("%s = %q (presente=%v), quería %q", c.key, v, ok, c.want)
-		}
+	if v, ok := envValue(got.cmd, "AZURE_CONFIG_DIR"); !ok || v != "/cfg/acme" {
+		t.Errorf("AZURE_CONFIG_DIR = %q (presente=%v), quería «/cfg/acme»", v, ok)
+	}
+	// AZURE_EXTENSION_DIR ya no se inyecta: las extensiones se comparten vía
+	// el symlink cliextensions del tenant.
+	if _, ok := envValue(got.cmd, "AZURE_EXTENSION_DIR"); ok {
+		t.Error("AZURE_EXTENSION_DIR sigue inyectándose; debía retirarse")
 	}
 
 	// El resto del entorno se hereda: az necesita proxy, locale, HOME...
@@ -102,7 +102,7 @@ func TestLoginScopesTheEnvironment(t *testing.T) {
 // porque azsel mantiene stdout limpio para el shell.
 func TestLoginWiresStreams(t *testing.T) {
 	got := stubRun(t, nil)
-	if err := Login("TID", "/cfg", "/ext", false); err != nil {
+	if err := Login("TID", "/cfg", false); err != nil {
 		t.Fatalf("Login: %v", err)
 	}
 	if got.cmd.Stdin != os.Stdin {
@@ -120,7 +120,7 @@ func TestLoginPropagatesFailure(t *testing.T) {
 	want := errors.New("el usuario canceló")
 	stubRun(t, func(*exec.Cmd) error { return want })
 
-	err := Login("TID", "/cfg", "/ext", false)
+	err := Login("TID", "/cfg", false)
 	if !errors.Is(err, want) {
 		t.Errorf("error = %v, quería %v", err, want)
 	}
@@ -168,19 +168,13 @@ func TestAvailable(t *testing.T) {
 // azsel appends has to win.
 func TestCommandEnvOverridesInheritedValues(t *testing.T) {
 	t.Setenv("AZURE_CONFIG_DIR", "/heredado/config")
-	t.Setenv("AZURE_EXTENSION_DIR", "/heredado/extensions")
 
 	got := stubRun(t, nil)
-	if err := Login("TID", "/cfg/acme", "/ext/compartido", false); err != nil {
+	if err := Login("TID", "/cfg/acme", false); err != nil {
 		t.Fatalf("Login: %v", err)
 	}
 
-	for _, c := range []struct{ key, want string }{
-		{"AZURE_CONFIG_DIR", "/cfg/acme"},
-		{"AZURE_EXTENSION_DIR", "/ext/compartido"},
-	} {
-		if v, _ := envValue(got.cmd, c.key); v != c.want {
-			t.Errorf("%s efectivo = %q, quería %q", c.key, v, c.want)
-		}
+	if v, _ := envValue(got.cmd, "AZURE_CONFIG_DIR"); v != "/cfg/acme" {
+		t.Errorf("AZURE_CONFIG_DIR efectivo = %q, quería «/cfg/acme»", v)
 	}
 }

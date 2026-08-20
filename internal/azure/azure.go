@@ -36,30 +36,28 @@ func Available() error {
 	return nil
 }
 
-// command builds an az invocation scoped to one tenant's directories. The
-// environment is inherited so az keeps the user's proxy, locale and so on;
-// only the two directories azsel controls are overridden.
+// command builds an az invocation scoped to one tenant's config directory.
+// The environment is inherited so az keeps the user's proxy, locale and so
+// on; only AZURE_CONFIG_DIR is overridden.
 //
-// Those two may already be exported — by azsel itself in an active session,
-// or by an Azure CLI install that sets AZURE_EXTENSION_DIR system-wide. That
-// is fine: os/exec deduplicates Env keeping the last occurrence, so what is
-// appended here wins. TestCommandEnvOverridesInheritedValues pins it, because
-// the guarantee is not obvious from reading this.
-func command(configDir, extensionsDir string, args ...string) *exec.Cmd {
+// Extensions are no longer steered with AZURE_EXTENSION_DIR: each tenant's
+// cliextensions is a symlink to the shared directory, so az finds shared
+// extensions through the filesystem however the tenant is reached (see
+// config.EnsureSharedExtensionsLink). AZURE_CONFIG_DIR may already be exported
+// — by azsel itself in an active session — and that is fine: os/exec
+// deduplicates Env keeping the last occurrence, so what is appended here wins.
+func command(configDir string, args ...string) *exec.Cmd {
 	cmd := exec.Command(binary, args...)
-	cmd.Env = append(os.Environ(),
-		"AZURE_CONFIG_DIR="+configDir,
-		"AZURE_EXTENSION_DIR="+extensionsDir,
-	)
+	cmd.Env = append(os.Environ(), "AZURE_CONFIG_DIR="+configDir)
 	return cmd
 }
 
-func Login(tenantID, configDir, extensionsDir string, useDeviceCode bool) error {
+func Login(tenantID, configDir string, useDeviceCode bool) error {
 	args := []string{"login", "--tenant", tenantID}
 	if useDeviceCode {
 		args = append(args, "--use-device-code")
 	}
-	cmd := command(configDir, extensionsDir, args...)
+	cmd := command(configDir, args...)
 	// Deliberate, and easy to undo by accident: the login is interactive, so
 	// stdin must reach az; and az's stdout is sent to stderr because azsel
 	// keeps stdout clean for the shell to consume.

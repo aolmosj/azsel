@@ -31,11 +31,10 @@ func runTUI(cmd *cobra.Command, args []string) error {
 
 	if m, ok := finalModel.(tui.Model); ok {
 		if selected := m.Selected(); selected != nil {
-			extDir, err := config.EnsureExtensionsDir()
-			if err != nil {
+			if err := config.EnsureSharedExtensionsLink(selected.ConfigDir); err != nil {
 				return err
 			}
-			exports := fmt.Sprintf("export AZURE_CONFIG_DIR=%s\nexport AZURE_EXTENSION_DIR=%s\n", selected.ConfigDir, extDir)
+			exports := fmt.Sprintf("export AZURE_CONFIG_DIR=%s\n", selected.ConfigDir)
 			if err := config.WriteEnv(exports); err != nil {
 				return err
 			}
