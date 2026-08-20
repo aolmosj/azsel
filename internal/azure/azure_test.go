@@ -77,6 +77,11 @@ func TestLoginArguments(t *testing.T) {
 
 // El aislamiento entre tenants depende enteramente de estas dos variables.
 func TestLoginScopesTheEnvironment(t *testing.T) {
+	// One snapshot of the environment, taken here, is the baseline for both
+	// what command() inherits and what the test measures — reading
+	// os.Environ() a second time to slice the result could drift (or panic)
+	// if anything mutated the environment in between.
+	base := os.Environ()
 	got := stubRun(t, nil)
 	if err := Login("TID", "/cfg/acme", false); err != nil {
 		t.Fatalf("Login: %v", err)
@@ -86,20 +91,19 @@ func TestLoginScopesTheEnvironment(t *testing.T) {
 		t.Errorf("AZURE_CONFIG_DIR = %q (presente=%v), quería «/cfg/acme»", v, ok)
 	}
 
-	// azsel debe añadir EXACTAMENTE una variable al entorno heredado:
-	// AZURE_CONFIG_DIR. Comprobar "AZURE_EXTENSION_DIR ausente" sería falso en
-	// un runner que ya la trae exportada (el de Linux lo hace) — lo que
-	// importa es que azsel no la ponga. command() hace append sobre
-	// os.Environ(), así que lo añadido es la cola tras esa longitud.
-	added := got.cmd.Env[len(os.Environ()):]
-	if len(added) != 1 {
-		t.Fatalf("azsel añadió %d variables, quería 1: %v", len(added), added)
+	// azsel must add exactly one variable to the inherited environment:
+	// AZURE_CONFIG_DIR. Checking "AZURE_EXTENSION_DIR absent" would be false
+	// on a runner that already exports it (Linux does) — what matters is that
+	// azsel does not set it.
+	if len(got.cmd.Env) < len(base) {
+		t.Fatalf("command() shrank the environment: %d < %d", len(got.cmd.Env), len(base))
 	}
-	if !strings.HasPrefix(added[0], "AZURE_CONFIG_DIR=") {
-		t.Errorf("azsel añadió %q, quería solo AZURE_CONFIG_DIR", added[0])
+	added := got.cmd.Env[len(base):]
+	if len(added) != 1 || added[0] != "AZURE_CONFIG_DIR=/cfg/acme" {
+		t.Errorf("azsel added %v, wanted exactly [AZURE_CONFIG_DIR=/cfg/acme]", added)
 	}
 
-	// El resto del entorno se hereda: az necesita proxy, locale, HOME...
+	// The rest of the environment is inherited: az needs proxy, locale, HOME…
 	if _, ok := envValue(got.cmd, "PATH"); !ok {
 		t.Error("no se heredó el entorno del proceso")
 	}
