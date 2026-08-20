@@ -128,3 +128,251 @@ func tenantNameFromTarget(target string) (name string, ok bool, err error) {
 	}
 	return rel, true, nil
 }
+
+// BackupsDir is where azsel parks a ~/.azure it had to move aside. Under
+// ~/.azsel so all of azsel's state lives in one place, computed without
+// creating anything.
+func BackupsDir() (string, error) { return inBase("backups") }
+
+// SetResult reports what SetDefault did, so the caller can tell the user.
+type SetResult struct {
+	Tenant string
+	// BackupPath is set when a real ~/.azure was moved aside; empty otherwise.
+	BackupPath string
+	// Repointed is true when an existing azsel link was moved, false when the
+	// link was created fresh.
+	Repointed bool
+}
+
+// SetDefault makes name the default tenant by pointing ~/.azure at its
+// profile. The symlink is the state; nothing is written to config.json.
+//
+// What happens to an existing ~/.azure follows the policy decided in #29:
+// a real directory is moved to a timestamped backup (never destroyed), an
+// azsel link is repointed, and a link azsel did not create is left alone with
+// an error rather than clobbered.
+func SetDefault(cfg *Config, name string, timestamp string) (SetResult, error) {
+	tenant := cfg.FindTenant(name)
+	if tenant == nil {
+		return SetResult{}, fmt.Errorf("tenant %q not found", name)
+	}
+
+	info, err := ResolveDefault(cfg)
+	if err != nil {
+		return SetResult{}, err
+	}
+	azure, err := AzureDir()
+	if err != nil {
+		return SetResult{}, err
+	}
+
+	result := SetResult{Tenant: name}
+	switch info.State {
+	case DefaultNone:
+		// Nothing in the way.
+	case DefaultSet:
+		result.Repointed = true // our own link; rename replaces it
+	case DefaultNative:
+		backup, err := backupAzure(azure, timestamp)
+		if err != nil {
+			return SetResult{}, err
+		}
+		result.BackupPath = backup
+	case DefaultBroken:
+		// A dangling link is ours to replace only if it pointed into our
+		// tenants directory. One dangling to somewhere else was not put there
+		// by azsel.
+		if under, err := targetUnderTenants(info.Target); err != nil {
+			return SetResult{}, err
+		} else if !under {
+			return SetResult{}, foreignLinkError(azure, info.Target)
+		}
+		result.Repointed = true
+	case DefaultForeign:
+		return SetResult{}, foreignLinkError(azure, info.Target)
+	}
+
+	// Share extensions through the filesystem: the default is reached via the
+	// link with no AZURE_EXTENSION_DIR, so az would otherwise resolve
+	// extensions inside the tenant. See #26.
+	if err := ensureSharedExtensionsLink(tenant.ConfigDir); err != nil {
+		return SetResult{}, err
+	}
+
+	if err := replaceWithSymlink(tenant.ConfigDir, azure); err != nil {
+		return SetResult{}, err
+	}
+	return result, nil
+}
+
+// ClearResult reports what ClearDefault did.
+type ClearResult struct {
+	// Cleared is true when a default link was removed.
+	Cleared bool
+	// LatestBackup is the newest ~/.azure backup on disk, if any, so the
+	// caller can tell the user where their old profile went. Not restored
+	// automatically — with several backups azsel would have to guess which.
+	LatestBackup string
+}
+
+// ClearDefault removes the default link, returning az to its own ~/.azure. A
+// real directory or a foreign link is left untouched.
+func ClearDefault(cfg *Config) (ClearResult, error) {
+	info, err := ResolveDefault(cfg)
+	if err != nil {
+		return ClearResult{}, err
+	}
+	azure, err := AzureDir()
+	if err != nil {
+		return ClearResult{}, err
+	}
+
+	var result ClearResult
+	switch info.State {
+	case DefaultSet:
+		if err := os.Remove(azure); err != nil {
+			return ClearResult{}, fmt.Errorf("removing default link: %w", err)
+		}
+		result.Cleared = true
+	case DefaultBroken:
+		// Only clear a broken link that was ours.
+		under, err := targetUnderTenants(info.Target)
+		if err != nil {
+			return ClearResult{}, err
+		}
+		if under {
+			if err := os.Remove(azure); err != nil {
+				return ClearResult{}, fmt.Errorf("removing default link: %w", err)
+			}
+			result.Cleared = true
+		}
+	case DefaultForeign:
+		return ClearResult{}, foreignLinkError(azure, info.Target)
+	case DefaultNone, DefaultNative:
+		// Nothing azsel put there.
+	}
+
+	if latest, err := latestBackup(); err == nil {
+		result.LatestBackup = latest
+	}
+	return result, nil
+}
+
+func foreignLinkError(azure, target string) error {
+	return fmt.Errorf("%s is a symlink to %s that azsel did not create; "+
+		"refusing to replace it — remove it yourself if you want azsel to manage the default", azure, target)
+}
+
+// backupAzure moves a real ~/.azure into ~/.azsel/backups/azure-<timestamp>
+// and returns the backup path. A move, not a copy: on the same volume it is
+// instant and preserves everything.
+func backupAzure(azure, timestamp string) (string, error) {
+	backups, err := BackupsDir()
+	if err != nil {
+		return "", err
+	}
+	if _, err := ensureDir(backups); err != nil {
+		return "", fmt.Errorf("creating backups directory: %w", err)
+	}
+	dest := filepath.Join(backups, "azure-"+timestamp)
+	if err := os.Rename(azure, dest); err != nil {
+		return "", fmt.Errorf("backing up %s to %s: %w", azure, dest, err)
+	}
+	return dest, nil
+}
+
+// latestBackup returns the most recent azure-* backup, or an error if none.
+func latestBackup() (string, error) {
+	backups, err := BackupsDir()
+	if err != nil {
+		return "", err
+	}
+	entries, err := os.ReadDir(backups)
+	if err != nil {
+		return "", err
+	}
+	var newest string
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), "azure-") {
+			continue
+		}
+		// Names are azure-<timestamp>; lexical order matches chronological
+		// when the caller uses a sortable timestamp.
+		if e.Name() > newest {
+			newest = e.Name()
+		}
+	}
+	if newest == "" {
+		return "", fmt.Errorf("no backups")
+	}
+	return filepath.Join(backups, newest), nil
+}
+
+// ensureSharedExtensionsLink makes the tenant's cliextensions a symlink to the
+// shared extensions directory, so extensions resolve to the same place
+// whether the tenant is reached through the default link or through
+// AZURE_EXTENSION_DIR. Idempotent: a correct link already in place is left be.
+func ensureSharedExtensionsLink(tenantDir string) error {
+	shared, err := EnsureExtensionsDir()
+	if err != nil {
+		return err
+	}
+	link := filepath.Join(tenantDir, "cliextensions")
+
+	fi, err := os.Lstat(link)
+	switch {
+	case err == nil && fi.Mode()&os.ModeSymlink != 0:
+		if target, _ := os.Readlink(link); target == shared {
+			return nil // already correct
+		}
+		if err := os.Remove(link); err != nil {
+			return fmt.Errorf("replacing extensions link: %w", err)
+		}
+	case err == nil:
+		// A real directory of stale extensions (leftovers predating the
+		// shared dir). Move it aside rather than delete, then link.
+		if err := os.Rename(link, link+".bak"); err != nil {
+			return fmt.Errorf("moving aside stale extensions: %w", err)
+		}
+	case !os.IsNotExist(err):
+		return fmt.Errorf("inspecting %s: %w", link, err)
+	}
+
+	if err := os.Symlink(shared, link); err != nil {
+		return fmt.Errorf("linking extensions: %w", err)
+	}
+	return nil
+}
+
+// replaceWithSymlink points linkPath at target atomically: it creates the new
+// link under a temporary name and renames it over linkPath, which on POSIX
+// replaces an existing file or symlink in one step, leaving no window where
+// linkPath is missing. It assumes linkPath is absent or a symlink — a real
+// directory there must be moved away first (rename cannot replace a
+// directory), which SetDefault does via backupAzure.
+func replaceWithSymlink(target, linkPath string) error {
+	tmp := fmt.Sprintf("%s.azsel-tmp.%d", linkPath, os.Getpid())
+	// Clear any leftover from an interrupted run.
+	_ = os.Remove(tmp)
+	if err := os.Symlink(target, tmp); err != nil {
+		return fmt.Errorf("creating link: %w", err)
+	}
+	if err := os.Rename(tmp, linkPath); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("installing link at %s: %w", linkPath, err)
+	}
+	return nil
+}
+
+// targetUnderTenants reports whether a path lies inside the tenants directory.
+func targetUnderTenants(target string) (bool, error) {
+	tenants, err := TenantsDir()
+	if err != nil {
+		return false, err
+	}
+	rel, err := filepath.Rel(tenants, target)
+	if err != nil {
+		return false, nil
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)), nil
+}
