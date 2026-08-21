@@ -75,11 +75,20 @@ func Login(tenantID, configDir string, useDeviceCode bool) error {
 // stdin or env option in `az login` for it — so it is briefly visible in the
 // process list. Prefer certificate where the exposure matters.
 func LoginServicePrincipal(tenantID, configDir, appID, certificate, secret string) error {
-	args := []string{"login", "--service-principal", "--tenant", tenantID, "--username", appID}
+	// Values are joined with '=' rather than passed as separate argv tokens.
+	// az parses with argparse, which treats a value beginning with '-' (an
+	// Azure secret can) as another flag; az's own help mandates the
+	// --password=secret form for exactly that case. The '=' form is
+	// unambiguous for every value.
+	args := []string{
+		"login", "--service-principal",
+		"--tenant=" + tenantID,
+		"--username=" + appID,
+	}
 	if certificate != "" {
-		args = append(args, "--certificate", certificate)
+		args = append(args, "--certificate="+certificate)
 	} else {
-		args = append(args, "--password", secret)
+		args = append(args, "--password="+secret)
 	}
 	cmd := command(configDir, args...)
 	cmd.Stdout = os.Stderr

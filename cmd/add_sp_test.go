@@ -103,7 +103,7 @@ func TestAddServicePrincipalSecretFromStdin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("az was not invoked: %v", err)
 	}
-	if !strings.Contains(string(got), "--password\nthe-secret") {
+	if !strings.Contains(string(got), "--password=the-secret") {
 		t.Errorf("secret not passed to az as --password:\n%s", got)
 	}
 }
@@ -137,5 +137,24 @@ func TestAddServicePrincipalMissingCertificate(t *testing.T) {
 	}
 	if _, err := os.Stat(sentinel); !os.IsNotExist(err) {
 		t.Error("az was invoked despite the missing certificate")
+	}
+}
+
+// A certificate path that is a directory fails fast, before az runs — os.Stat
+// alone would accept it.
+func TestAddServicePrincipalCertificateIsDirectory(t *testing.T) {
+	home := addSandbox(t)
+	sentinel := filepath.Join(home, "az-ran")
+	fakeAzureCLI(t, `: > "`+sentinel+`"; exit 0`)
+	dir := t.TempDir() // a directory, not a PEM file
+	quiet(t)
+
+	err := run(t, newAddCmd(),
+		"acme", "--tenant", testTenantID, "--service-principal", "-u", "app", "--certificate", dir)
+	if err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Errorf("error = %v, wanted a not-a-regular-file error", err)
+	}
+	if _, err := os.Stat(sentinel); !os.IsNotExist(err) {
+		t.Error("az was invoked despite the certificate being a directory")
 	}
 }
