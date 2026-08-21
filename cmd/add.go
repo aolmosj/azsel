@@ -78,16 +78,27 @@ func newAddCmd() *cobra.Command {
 				return err
 			}
 
-			reader := bufio.NewReader(os.Stdin)
+			// A prompt reader, created only when a prompt is actually needed.
+			// In service-principal mode nothing is prompted (name from args,
+			// tenant from --tenant), so stdin is left untouched for the secret
+			// that io.ReadAll consumes below — a buffered reader here could
+			// swallow bytes meant for it.
+			var reader *bufio.Reader
+			prompt := func(label string) string {
+				if reader == nil {
+					reader = bufio.NewReader(os.Stdin)
+				}
+				fmt.Fprint(os.Stderr, label)
+				line, _ := reader.ReadString('\n')
+				return line
+			}
 
 			// Name: a positional argument, or a prompt when omitted.
 			var name string
 			if len(args) == 1 {
 				name = strings.TrimSpace(args[0])
 			} else {
-				fmt.Fprint(os.Stderr, "Tenant name (lowercase, alphanumeric, hyphens): ")
-				line, _ := reader.ReadString('\n')
-				name = strings.TrimSpace(line)
+				name = strings.TrimSpace(prompt("Tenant name (lowercase, alphanumeric, hyphens): "))
 			}
 			if !nameRegex.MatchString(name) {
 				return fmt.Errorf("invalid name %q — use lowercase alphanumeric and hyphens only", name)
@@ -99,8 +110,7 @@ func newAddCmd() *cobra.Command {
 			// Tenant ID: the --tenant flag, or a prompt when omitted.
 			rawTenantID := tenantFlag
 			if rawTenantID == "" {
-				fmt.Fprint(os.Stderr, "Azure Tenant ID (GUID or domain): ")
-				rawTenantID, _ = reader.ReadString('\n')
+				rawTenantID = prompt("Azure Tenant ID (GUID or domain): ")
 			}
 			tenantID, err := normalizeTenantID(rawTenantID)
 			if err != nil {
@@ -122,8 +132,12 @@ func newAddCmd() *cobra.Command {
 				}
 			}
 			if servicePrincipal && certificate != "" {
-				if _, err := os.Stat(certificate); err != nil {
+				fi, err := os.Stat(certificate)
+				if err != nil {
 					return fmt.Errorf("certificate: %w", err)
+				}
+				if !fi.Mode().IsRegular() {
+					return fmt.Errorf("certificate: %s is not a regular file", certificate)
 				}
 			}
 

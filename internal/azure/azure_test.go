@@ -196,7 +196,7 @@ func TestLoginServicePrincipalWithCertificate(t *testing.T) {
 	if err := LoginServicePrincipal("TID", "/cfg", "app-id", "/path/cert.pem", ""); err != nil {
 		t.Fatalf("LoginServicePrincipal: %v", err)
 	}
-	want := []string{"az", "login", "--service-principal", "--tenant", "TID", "--username", "app-id", "--certificate", "/path/cert.pem"}
+	want := []string{"az", "login", "--service-principal", "--tenant=TID", "--username=app-id", "--certificate=/path/cert.pem"}
 	if !slices.Equal(got.cmd.Args, want) {
 		t.Errorf("args = %v, wanted %v", got.cmd.Args, want)
 	}
@@ -211,7 +211,7 @@ func TestLoginServicePrincipalWithSecret(t *testing.T) {
 	if err := LoginServicePrincipal("TID", "/cfg", "app-id", "", "s3cr3t"); err != nil {
 		t.Fatalf("LoginServicePrincipal: %v", err)
 	}
-	want := []string{"az", "login", "--service-principal", "--tenant", "TID", "--username", "app-id", "--password", "s3cr3t"}
+	want := []string{"az", "login", "--service-principal", "--tenant=TID", "--username=app-id", "--password=s3cr3t"}
 	if !slices.Equal(got.cmd.Args, want) {
 		t.Errorf("args = %v, wanted %v", got.cmd.Args, want)
 	}
@@ -225,5 +225,22 @@ func TestLoginServicePrincipalScopesConfigDir(t *testing.T) {
 	}
 	if v, ok := envValue(got.cmd, "AZURE_CONFIG_DIR"); !ok || v != "/cfg/acme" {
 		t.Errorf("AZURE_CONFIG_DIR = %q (present=%v), wanted /cfg/acme", v, ok)
+	}
+}
+
+// A secret starting with '-' must be one token joined with '=', or az's
+// argparse would read it as a flag and the login would fail.
+func TestLoginServicePrincipalSecretStartingWithDash(t *testing.T) {
+	got := stubRun(t, nil)
+	if err := LoginServicePrincipal("TID", "/cfg", "app", "", "-leadingdash"); err != nil {
+		t.Fatalf("LoginServicePrincipal: %v", err)
+	}
+	for _, a := range got.cmd.Args {
+		if a == "--password" {
+			t.Fatal("secret passed as a separate token; a '-' secret would misparse")
+		}
+	}
+	if !slices.Contains(got.cmd.Args, "--password=-leadingdash") {
+		t.Errorf("args = %v, wanted a single --password=-leadingdash token", got.cmd.Args)
 	}
 }
