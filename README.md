@@ -429,13 +429,13 @@ This project follows [Semantic Versioning](https://semver.org/). The version is 
 
 ```bash
 $ azsel --version
-azsel version 1.0.0
+azsel version 1.1.0
 ```
 
 ### Build with a specific version
 
 ```bash
-go build -ldflags "-X main.version=1.0.0" -o azsel .
+go build -ldflags "-X main.version=1.1.0" -o azsel .
 ```
 
 Without `-ldflags`, the version defaults to `dev`.
@@ -463,7 +463,7 @@ Pre-built binaries are available on the [Releases](https://github.com/aolmosj/az
 
 ```bash
 # Example: macOS arm64
-VERSION=1.0.0
+VERSION=1.1.0
 BASE=https://github.com/aolmosj/azsel/releases/download/v$VERSION
 
 curl -LO $BASE/azsel_${VERSION}_darwin_arm64.tar.gz
