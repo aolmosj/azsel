@@ -26,6 +26,9 @@ type Model struct {
 	confirming  bool
 	confirmName string
 	status      string
+
+	width  int
+	height int
 }
 
 func NewModel(tenants []config.Tenant, currentConfigDir, defaultName string, setDefault func(name string) (string, error)) Model {
@@ -71,6 +74,7 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
 		h, v := lipgloss.NewStyle().Margin(1, 2).GetFrameSize()
 		m.list.SetSize(msg.Width-h, msg.Height-v)
 		return m, nil
@@ -132,14 +136,34 @@ func (m Model) View() string {
 	if m.quitting {
 		return ""
 	}
+	// The confirmation takes over the screen as a centered modal rather than
+	// trailing after the list and help bar, where it was easy to miss.
+	if m.confirming {
+		return m.confirmView()
+	}
 	body := m.list.View()
-	switch {
-	case m.confirming:
-		body += "\n\n" + confirmStyle.Render("Set "+m.confirmName+" as the default? This repoints ~/.azure. [y/N]")
-	case m.status != "":
+	if m.status != "" {
 		body += "\n\n" + statusMsgStyle.Render(m.status)
 	}
 	return appStyle.Render(body)
+}
+
+func (m Model) confirmView() string {
+	box := confirmBoxStyle.Render(lipgloss.JoinVertical(lipgloss.Left,
+		confirmTitleStyle.Render("Set "+m.confirmName+" as the default?"),
+		"",
+		"This repoints ~/.azure to this tenant.",
+		"",
+		confirmKeysStyle.Render("y")+" set default     "+confirmKeysStyle.Render("N")+" cancel",
+	))
+	// Center in the content area (terminal minus the app margin). Before the
+	// first WindowSizeMsg the size is unknown, so fall back to the bare box.
+	fh, fv := lipgloss.NewStyle().Margin(1, 2).GetFrameSize()
+	w, h := m.width-fh, m.height-fv
+	if w <= 0 || h <= 0 {
+		return appStyle.Render(box)
+	}
+	return appStyle.Render(lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box))
 }
 
 func (m Model) Selected() *config.Tenant {

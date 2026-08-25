@@ -501,3 +501,23 @@ var errTest = &testError{}
 type testError struct{}
 
 func (*testError) Error() string { return "boom" }
+
+// The confirmation is a modal that takes over the view, not a line appended
+// after the list and help bar where it was easy to miss (#38). Guard: while
+// confirming, other tenants from the list must not render.
+func TestSetDefaultConfirmIsAModalNotAppended(t *testing.T) {
+	ts := tenants() // acme (selected), globex
+	m := NewModel(ts, "", "", func(string) (string, error) { return "", nil })
+	m, _ = send(t, m, tea.WindowSizeMsg{Width: 60, Height: 20})
+	m, _ = send(t, m, keyMsg("d"))
+
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "as the default?") {
+		t.Fatalf("confirmation prompt missing:\n%s", view)
+	}
+	// globex only appears in the list, never in the modal — if it shows, the
+	// prompt is back to trailing after the list.
+	if strings.Contains(view, ts[1].Name) {
+		t.Errorf("the list still renders during confirmation (found %q):\n%s", ts[1].Name, view)
+	}
+}
