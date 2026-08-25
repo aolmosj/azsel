@@ -18,12 +18,12 @@ func defaultSandbox(t *testing.T, tenants ...string) string {
 	for _, name := range tenants {
 		dir, _, err := config.EnsureTenantDir(name)
 		if err != nil {
-			t.Fatalf("preparando: %v", err)
+			t.Fatalf("setup: %v", err)
 		}
 		cfg.Tenants = append(cfg.Tenants, config.Tenant{Name: name, ConfigDir: dir})
 	}
 	if err := config.Save(cfg); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	return home
 }
@@ -36,13 +36,13 @@ func TestDefaultSetCreatesLink(t *testing.T) {
 	}
 	target, err := os.Readlink(filepath.Join(home, ".azure"))
 	if err != nil {
-		t.Fatalf("~/.azure no es enlace: %v", err)
+		t.Fatalf("~/.azure is not a link: %v", err)
 	}
 	if !strings.HasSuffix(target, filepath.Join("tenants", "contoso")) {
-		t.Errorf("~/.azure -> %q, quería el tenant contoso", target)
+		t.Errorf("~/.azure -> %q, wanted the contoso tenant", target)
 	}
 	if got := out(); !strings.Contains(got, "Default tenant set") {
-		t.Errorf("salida = %q", got)
+		t.Errorf("output = %q", got)
 	}
 }
 
@@ -50,19 +50,19 @@ func TestDefaultSetBacksUpRealAzure(t *testing.T) {
 	home := defaultSandbox(t, "contoso")
 	azure := filepath.Join(home, ".azure")
 	if err := os.MkdirAll(azure, 0755); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(azure, "tok"), []byte("x"), 0600); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	out := quiet(t)
 	if err := run(t, newDefaultCmd(), "contoso"); err != nil {
 		t.Fatalf("default: %v", err)
 	}
 	if got := out(); !strings.Contains(got, "Moved your existing ~/.azure") {
-		t.Errorf("no se informó del backup: %q", got)
+		t.Errorf("the backup was not reported: %q", got)
 	}
-	// El backup existe y conserva el contenido.
+	// The backup exists and keeps its content.
 	entries, err := os.ReadDir(filepath.Join(home, ".azsel", "backups"))
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("backups = %v (err %v)", entries, err)
@@ -76,7 +76,7 @@ func TestDefaultShow(t *testing.T) {
 		t.Fatalf("default: %v", err)
 	}
 	if got := out(); !strings.Contains(got, "No default set") {
-		t.Errorf("salida = %q, quería «No default set»", got)
+		t.Errorf("output = %q, wanted «No default set»", got)
 	}
 }
 
@@ -91,7 +91,7 @@ func TestDefaultShowWhenSet(t *testing.T) {
 		t.Fatalf("show: %v", err)
 	}
 	if got := out(); !strings.Contains(got, "Default tenant: contoso") {
-		t.Errorf("salida = %q", got)
+		t.Errorf("output = %q", got)
 	}
 }
 
@@ -106,17 +106,17 @@ func TestDefaultClear(t *testing.T) {
 		t.Fatalf("clear: %v", err)
 	}
 	if _, err := os.Lstat(filepath.Join(home, ".azure")); !os.IsNotExist(err) {
-		t.Error("~/.azure sigue existiendo tras --clear")
+		t.Error("~/.azure still exists after --clear")
 	}
 	if got := out(); !strings.Contains(got, "Default cleared") {
-		t.Errorf("salida = %q", got)
+		t.Errorf("output = %q", got)
 	}
 }
 
 func TestDefaultClearReportsBackup(t *testing.T) {
 	home := defaultSandbox(t, "contoso")
 	if err := os.MkdirAll(filepath.Join(home, ".azure"), 0755); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	quiet(t)
 	if err := run(t, newDefaultCmd(), "contoso"); err != nil {
@@ -127,15 +127,15 @@ func TestDefaultClearReportsBackup(t *testing.T) {
 		t.Fatalf("clear: %v", err)
 	}
 	if got := out(); !strings.Contains(got, "Restore it with:") {
-		t.Errorf("clear no explicó cómo restaurar: %q", got)
+		t.Errorf("clear did not explain how to restore: %q", got)
 	}
 }
 
 func TestDefaultRejectsUnknownTenant(t *testing.T) {
 	defaultSandbox(t, "contoso")
 	quiet(t)
-	if err := run(t, newDefaultCmd(), "fantasma"); err == nil {
-		t.Fatal("default aceptó un tenant inexistente")
+	if err := run(t, newDefaultCmd(), "ghost"); err == nil {
+		t.Fatal("default accepted a nonexistent tenant")
 	}
 }
 
@@ -143,26 +143,26 @@ func TestDefaultClearWithNameIsError(t *testing.T) {
 	defaultSandbox(t, "contoso")
 	quiet(t)
 	if err := run(t, newDefaultCmd(), "contoso", "--clear"); err == nil {
-		t.Fatal("default --clear con nombre debería fallar")
+		t.Fatal("default --clear with a name should fail")
 	}
 }
 
-// Mostrar un enlace roto debe explicar el problema, no fingir normalidad.
+// Showing a broken link should explain the problem, not fake normality.
 func TestDefaultShowBrokenLink(t *testing.T) {
 	home := defaultSandbox(t, "contoso")
 	quiet(t)
 	if err := run(t, newDefaultCmd(), "contoso"); err != nil {
 		t.Fatalf("set: %v", err)
 	}
-	// Rompemos el enlace borrando el tenant a mano (sin pasar por remove).
+	// We break the link by deleting the tenant by hand (without going through remove).
 	if err := os.RemoveAll(filepath.Join(home, ".azsel", "tenants", "contoso")); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	out := quiet(t)
 	if err := run(t, newDefaultCmd()); err != nil {
 		t.Fatalf("show: %v", err)
 	}
 	if got := out(); !strings.Contains(got, "broken symlink") {
-		t.Errorf("no se avisó del enlace roto: %q", got)
+		t.Errorf("the broken link was not reported: %q", got)
 	}
 }

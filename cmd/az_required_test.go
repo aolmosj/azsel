@@ -31,7 +31,7 @@ func quiet(t *testing.T) func() string {
 	path := filepath.Join(t.TempDir(), "output")
 	f, err := os.Create(path)
 	if err != nil {
-		t.Fatalf("creando el fichero de salida: %v", err)
+		t.Fatalf("creating the output file: %v", err)
 	}
 	outOrig, errOrig := os.Stdout, os.Stderr
 	os.Stdout, os.Stderr = f, f
@@ -42,7 +42,7 @@ func quiet(t *testing.T) func() string {
 	return func() string {
 		data, err := os.ReadFile(path)
 		if err != nil {
-			t.Fatalf("leyendo la salida: %v", err)
+			t.Fatalf("reading the output: %v", err)
 		}
 		return string(data)
 	}
@@ -57,52 +57,52 @@ func run(t *testing.T, c *cobra.Command, args ...string) error {
 	return c.Execute()
 }
 
-// El coste de que az falte debe ser el mensaje y nada más. Antes el usuario
-// escribía nombre y tenant ID, se creaba el directorio del tenant, y solo
-// entonces reventaba con el error crudo de Go.
+// The cost of az being missing should be the message and nothing more. It
+// used to be that the user typed name and tenant ID, the tenant directory was
+// created, and only then it blew up with Go's raw error.
 func TestAddFailsBeforeAskingAnything(t *testing.T) {
 	home := withoutAzureCLI(t)
 	quiet(t)
 
-	// Lo que el usuario habría tecleado si se le hubiera preguntado.
+	// What the user would have typed if they had been asked.
 	f := feedStdin(t, "acme\n11111111-1111-1111-1111-111111111111\n")
 
 	err := run(t, newAddCmd())
 	if err == nil {
-		t.Fatal("add devolvió nil sin az instalado")
+		t.Fatal("add returned nil without az installed")
 	}
 	if !strings.Contains(err.Error(), "Azure CLI") {
-		t.Errorf("error = %q, quería que nombrara Azure CLI", err)
+		t.Errorf("error = %q, wanted it to name Azure CLI", err)
 	}
 	if !strings.Contains(err.Error(), "install") {
-		t.Errorf("error = %q, quería que dijera cómo instalarlo", err)
+		t.Errorf("error = %q, wanted it to say how to install it", err)
 	}
 
-	// Nada leído de stdin: no se llegó a preguntar.
+	// Nothing read from stdin: it never got as far as asking.
 	if pos, _ := f.Seek(0, io.SeekCurrent); pos != 0 {
-		t.Errorf("se consumió stdin antes de comprobar az (offset %d)", pos)
+		t.Errorf("stdin was consumed before checking az (offset %d)", pos)
 	}
-	// Y nada creado en disco.
+	// And nothing created on disk.
 	if entries, err := os.ReadDir(filepath.Join(home, "tenants")); err == nil && len(entries) > 0 {
-		t.Errorf("se crearon %d directorios de tenant pese al fallo", len(entries))
+		t.Errorf("%d tenant directories were created despite the failure", len(entries))
 	}
 }
 
-// Solo add necesita az. El resto debe seguir funcionando en una máquina sin
-// Azure CLI — consultar tenants o cambiar de uno a otro no invoca nada.
+// Only add needs az. The rest must keep working on a machine without the
+// Azure CLI — listing tenants or switching between them invokes nothing.
 func TestCommandsThatDoNotNeedAzureCLI(t *testing.T) {
 	home := withoutAzureCLI(t)
 	quiet(t)
 
 	tenantDir := filepath.Join(home, "tenants", "acme")
 	if err := os.MkdirAll(tenantDir, 0755); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	cfg := &config.Config{Tenants: []config.Tenant{
 		{Name: "acme", TenantID: "11111111-1111-1111-1111-111111111111", ConfigDir: tenantDir},
 	}}
 	if err := config.Save(cfg); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 
 	cases := []struct {
@@ -118,23 +118,23 @@ func TestCommandsThatDoNotNeedAzureCLI(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			if err := run(t, c.cmd, c.args...); err != nil {
-				t.Errorf("%s falló sin az instalado: %v", c.name, err)
+				t.Errorf("%s failed without az installed: %v", c.name, err)
 			}
 		})
 	}
 }
 
-// feedStdin conecta os.Stdin a un fichero con lo que el usuario teclearía, y
-// devuelve el descriptor para poder comprobar cuánto se ha llegado a leer.
+// feedStdin connects os.Stdin to a file with what the user would type, and
+// returns the descriptor so we can check how much has been read.
 func feedStdin(t *testing.T, content string) *os.File {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "stdin")
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("preparando stdin: %v", err)
+		t.Fatalf("setting up stdin: %v", err)
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		t.Fatalf("abriendo stdin falso: %v", err)
+		t.Fatalf("opening the fake stdin: %v", err)
 	}
 	orig := os.Stdin
 	os.Stdin = f
@@ -145,19 +145,19 @@ func feedStdin(t *testing.T, content string) *os.File {
 	return f
 }
 
-// fakeAzureCLI pone un az de mentira delante del PATH con el cuerpo indicado.
-// Deja ejercitar el camino real —Available lo encuentra, Login lo ejecuta—
-// sin costuras y sin tocar Azure.
+// fakeAzureCLI puts a fake az in front of the PATH with the given body. It
+// lets us exercise the real path —Available finds it, Login runs it— without
+// seams and without touching Azure.
 //
-// Se antepone en vez de reemplazar el PATH: reemplazarlo dejaba al script sin
-// utilidades básicas, de modo que un cuerpo como `touch centinela` fallaba en
-// silencio con «command not found» y cualquier aserción sobre el centinela
-// resultaba vacía. Anteponerlo basta para que el az de mentira gane.
+// It's prepended rather than replacing the PATH: replacing it left the script
+// without basic utilities, so that a body like `touch sentinel` failed
+// silently with «command not found» and any assertion about the sentinel came
+// out empty. Prepending is enough for the fake az to win.
 func fakeAzureCLI(t *testing.T, body string) {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "az"), []byte("#!/bin/sh\n"+body+"\n"), 0755); err != nil {
-		t.Fatalf("escribiendo el az falso: %v", err)
+		t.Fatalf("writing the fake az: %v", err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }

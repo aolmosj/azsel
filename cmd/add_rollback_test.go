@@ -11,7 +11,7 @@ import (
 
 const testTenantID = "11111111-1111-1111-1111-111111111111"
 
-// sandbox aísla la configuración de azsel para un test.
+// sandbox isolates azsel's configuration for a test.
 func addSandbox(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
@@ -19,7 +19,7 @@ func addSandbox(t *testing.T) string {
 	return home
 }
 
-// El caso feliz, de punta a punta con un az de mentira que sale con 0.
+// The happy path, end-to-end with a fake az that exits 0.
 func TestAddSucceeds(t *testing.T) {
 	home := addSandbox(t)
 	fakeAzureCLI(t, "exit 0")
@@ -31,7 +31,7 @@ func TestAddSucceeds(t *testing.T) {
 	}
 
 	if fi, err := os.Stat(filepath.Join(home, "tenants", "acme")); err != nil || !fi.IsDir() {
-		t.Fatalf("no se creó el directorio del tenant: %v", err)
+		t.Fatalf("tenant directory was not created: %v", err)
 	}
 	cfg, err := config.Load()
 	if err != nil {
@@ -39,14 +39,14 @@ func TestAddSucceeds(t *testing.T) {
 	}
 	got := cfg.FindTenant("acme")
 	if got == nil {
-		t.Fatal("el tenant no se guardó en config.json")
+		t.Fatal("the tenant was not saved to config.json")
 	}
 	if got.TenantID != testTenantID {
-		t.Errorf("TenantID = %q, quería %q", got.TenantID, testTenantID)
+		t.Errorf("TenantID = %q, wanted %q", got.TenantID, testTenantID)
 	}
 }
 
-// El fallo que motiva esta issue: az login falla y el directorio se queda.
+// The failure that motivates this issue: az login fails and the directory stays.
 func TestAddRemovesDirectoryItCreatedWhenLoginFails(t *testing.T) {
 	home := addSandbox(t)
 	fakeAzureCLI(t, "exit 1")
@@ -54,34 +54,34 @@ func TestAddRemovesDirectoryItCreatedWhenLoginFails(t *testing.T) {
 	quiet(t)
 
 	if err := run(t, newAddCmd()); err == nil {
-		t.Fatal("add devolvió nil con az login fallando")
+		t.Fatal("add returned nil with az login failing")
 	}
 
 	if _, err := os.Stat(filepath.Join(home, "tenants", "acme")); !os.IsNotExist(err) {
-		t.Errorf("quedó el directorio huérfano (err=%v)", err)
+		t.Errorf("orphaned directory was left behind (err=%v)", err)
 	}
 	cfg, err := config.Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if cfg.FindTenant("acme") != nil {
-		t.Error("config.json quedó con un tenant cuyo login no completó")
+		t.Error("config.json was left with a tenant whose login did not complete")
 	}
 }
 
-// El contrapunto, y lo que hace peligroso este arreglo si se hace mal: un
-// directorio preexistente puede contener credenciales válidas de un intento
-// anterior. Un login fallido no debe destruirlas.
+// The counterpoint, and what makes this fix dangerous if done wrong: a
+// preexisting directory may contain valid credentials from an earlier
+// attempt. A failed login must not destroy them.
 func TestAddKeepsPreexistingDirectoryWhenLoginFails(t *testing.T) {
 	home := addSandbox(t)
 
 	tenantDir := filepath.Join(home, "tenants", "acme")
 	if err := os.MkdirAll(tenantDir, 0755); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	token := filepath.Join(tenantDir, "msal_token_cache.json")
-	if err := os.WriteFile(token, []byte(`{"credenciales":"valiosas"}`), 0600); err != nil {
-		t.Fatalf("preparando: %v", err)
+	if err := os.WriteFile(token, []byte(`{"credentials":"valuable"}`), 0600); err != nil {
+		t.Fatalf("setup: %v", err)
 	}
 
 	fakeAzureCLI(t, "exit 1")
@@ -89,23 +89,23 @@ func TestAddKeepsPreexistingDirectoryWhenLoginFails(t *testing.T) {
 	quiet(t)
 
 	if err := run(t, newAddCmd()); err == nil {
-		t.Fatal("add devolvió nil con az login fallando")
+		t.Fatal("add returned nil with az login failing")
 	}
 
 	if _, err := os.Stat(tenantDir); err != nil {
-		t.Fatalf("se borró un directorio preexistente: %v", err)
+		t.Fatalf("a preexisting directory was deleted: %v", err)
 	}
 	data, err := os.ReadFile(token)
 	if err != nil {
-		t.Fatalf("se borraron las credenciales preexistentes: %v", err)
+		t.Fatalf("preexisting credentials were deleted: %v", err)
 	}
-	if string(data) != `{"credenciales":"valiosas"}` {
-		t.Errorf("las credenciales cambiaron: %s", data)
+	if string(data) != `{"credentials":"valuable"}` {
+		t.Errorf("the credentials changed: %s", data)
 	}
 }
 
-// Un nombre inválido debe rechazarse sin crear nada y sin llegar a pedir el
-// tenant ID.
+// An invalid name should be rejected without creating anything and without
+// getting as far as asking for the tenant ID.
 func TestAddRejectsInvalidNameWithoutTouchingDisk(t *testing.T) {
 	home := addSandbox(t)
 	fakeAzureCLI(t, "exit 0")
@@ -113,44 +113,44 @@ func TestAddRejectsInvalidNameWithoutTouchingDisk(t *testing.T) {
 	output := quiet(t)
 
 	if err := run(t, newAddCmd()); err == nil {
-		t.Fatal("add aceptó un nombre inválido")
+		t.Fatal("add accepted an invalid name")
 	}
 	if _, err := os.Stat(filepath.Join(home, "tenants")); !os.IsNotExist(err) {
-		t.Error("se creó el directorio de tenants pese al nombre inválido")
+		t.Error("the tenants directory was created despite the invalid name")
 	}
-	// El offset de stdin no sirve para comprobar esto: bufio.Reader lee por
-	// bloques, no por líneas. Lo que sí prueba que no se siguió adelante es
-	// que el segundo prompt nunca se imprimió.
+	// The stdin offset is no good for checking this: bufio.Reader reads in
+	// blocks, not lines. What does prove it didn't go ahead is that the
+	// second prompt was never printed.
 	if got := output(); strings.Contains(got, "Azure Tenant ID") {
-		t.Errorf("se pidió el tenant ID pese al nombre inválido:\n%s", got)
+		t.Errorf("the tenant ID was requested despite the invalid name:\n%s", got)
 	}
 }
 
-// Un tenant ID mal pegado debe morir aquí, no en Azure: el error de azsel es
-// más claro y no cuesta un viaje al navegador.
+// A badly pasted tenant ID should die here, not at Azure: azsel's error is
+// clearer and doesn't cost a trip to the browser.
 func TestAddRejectsInvalidTenantIDBeforeCallingAz(t *testing.T) {
 	home := addSandbox(t)
 	fakeAzureCLI(t, `touch "$AZSEL_HOME/az-called"; exit 0`)
-	feedStdin(t, "acme\nno-soy-un-tenant\n")
+	feedStdin(t, "acme\nnot-a-tenant\n")
 	quiet(t)
 
 	err := run(t, newAddCmd())
 	if err == nil {
-		t.Fatal("add aceptó un tenant ID inválido")
+		t.Fatal("add accepted an invalid tenant ID")
 	}
 	if !strings.Contains(err.Error(), "invalid tenant ID") {
-		t.Errorf("error = %q, quería que explicara el formato", err)
+		t.Errorf("error = %q, wanted it to explain the format", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, "az-called")); !os.IsNotExist(err) {
-		t.Error("se invocó az pese al tenant ID inválido")
+		t.Error("az was invoked despite the invalid tenant ID")
 	}
 	if _, err := os.Stat(filepath.Join(home, "tenants", "acme")); !os.IsNotExist(err) {
-		t.Error("se creó el directorio del tenant pese al tenant ID inválido")
+		t.Error("the tenant directory was created despite the invalid tenant ID")
 	}
 }
 
-// La normalización tiene que llegar hasta config.json: si no, el mismo tenant
-// escrito con distinta caja aparecería como dos entradas distintas.
+// Normalization has to reach config.json: otherwise the same tenant written
+// with different casing would appear as two distinct entries.
 func TestAddStoresTenantIDNormalized(t *testing.T) {
 	addSandbox(t)
 	fakeAzureCLI(t, "exit 0")
@@ -166,56 +166,57 @@ func TestAddStoresTenantIDNormalized(t *testing.T) {
 	}
 	tenant := cfg.FindTenant("acme")
 	if tenant == nil {
-		t.Fatal("no se guardó el tenant")
+		t.Fatal("the tenant was not saved")
 	}
 	if want := "aabbccdd-1122-3344-5566-778899aabbcc"; tenant.TenantID != want {
-		t.Errorf("TenantID = %q, quería %q", tenant.TenantID, want)
+		t.Errorf("TenantID = %q, wanted %q", tenant.TenantID, want)
 	}
 }
 
-// El rollback no puede cubrir solo el login. Entre crear el directorio del
-// tenant y escribir config.json hay más formas de salir, y todas dejan el
-// mismo huérfano. Esta reproduce una real: un fichero ocupando la ruta del
-// directorio de extensiones, que EnsureExtensionsDir rechaza desde #7.
+// The rollback can't cover only the login. Between creating the tenant
+// directory and writing config.json there are more ways to exit, and they all
+// leave the same orphan behind. This one reproduces a real case: a file
+// occupying the path of the extensions directory, which EnsureExtensionsDir
+// rejects since #7.
 func TestAddRemovesDirectoryWhenExtensionsDirFails(t *testing.T) {
 	home := addSandbox(t)
 	if err := os.WriteFile(filepath.Join(home, "extensions"), nil, 0644); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	fakeAzureCLI(t, "exit 0")
 	feedStdin(t, "acme\n"+testTenantID+"\n")
 	quiet(t)
 
 	if err := run(t, newAddCmd()); err == nil {
-		t.Fatal("add devolvió nil con el directorio de extensiones bloqueado")
+		t.Fatal("add returned nil with the extensions directory blocked")
 	}
 	if _, err := os.Stat(filepath.Join(home, "tenants", "acme")); !os.IsNotExist(err) {
-		t.Errorf("quedó el directorio huérfano (err=%v)", err)
+		t.Errorf("orphaned directory was left behind (err=%v)", err)
 	}
 }
 
-// Y tampoco puede dejarlo si falla el guardado de config.json: un tenant con
-// directorio pero sin entrada es exactamente el estado que #9 elimina.
+// And it can't leave it behind if saving config.json fails either: a tenant
+// with a directory but no entry is exactly the state that #9 eliminates.
 //
-// Llegar hasta el Save requiere cuidado. Poner un directorio en la ruta de
-// config.json no vale: Load falla al arrancar el comando, antes de que se
-// cree nada, y el test pasaría sin haber ejercitado nada. Lo que se hace es
-// dejar tenants/ y extensions/ ya creados y volver ~/.azsel de solo lectura,
-// de modo que todo tenga éxito hasta la escritura final.
+// Reaching the Save requires care. Putting a directory at config.json's path
+// won't do: Load fails when the command starts, before anything is created,
+// and the test would pass without having exercised anything. What we do is
+// leave tenants/ and extensions/ already created and turn ~/.azsel
+// read-only, so that everything succeeds up to the final write.
 func TestAddRemovesDirectoryWhenConfigCannotBeSaved(t *testing.T) {
 	if os.Geteuid() == 0 {
-		t.Skip("root ignora los permisos de fichero")
+		t.Skip("root ignores file permissions")
 	}
 	home := addSandbox(t)
 	for _, dir := range []string{"tenants", "extensions"} {
 		if err := os.MkdirAll(filepath.Join(home, dir), 0755); err != nil {
-			t.Fatalf("preparando: %v", err)
+			t.Fatalf("setup: %v", err)
 		}
 	}
 	if err := os.Chmod(home, 0555); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
-	// Devolver el permiso de escritura para que t.TempDir pueda limpiar.
+	// Restore write permission so that t.TempDir can clean up.
 	t.Cleanup(func() { _ = os.Chmod(home, 0755) })
 
 	fakeAzureCLI(t, "exit 0")
@@ -223,9 +224,9 @@ func TestAddRemovesDirectoryWhenConfigCannotBeSaved(t *testing.T) {
 	quiet(t)
 
 	if err := run(t, newAddCmd()); err == nil {
-		t.Fatal("add devolvió nil sin poder guardar la configuración")
+		t.Fatal("add returned nil despite being unable to save the configuration")
 	}
 	if _, err := os.Stat(filepath.Join(home, "tenants", "acme")); !os.IsNotExist(err) {
-		t.Errorf("quedó el directorio huérfano (err=%v)", err)
+		t.Errorf("orphaned directory was left behind (err=%v)", err)
 	}
 }

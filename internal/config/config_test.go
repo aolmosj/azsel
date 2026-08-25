@@ -28,13 +28,13 @@ func TestBaseDirHonoursEnvHome(t *testing.T) {
 		t.Fatalf("BaseDir: %v", err)
 	}
 	if got != dir {
-		t.Errorf("BaseDir = %q, quería %q", got, dir)
+		t.Errorf("BaseDir = %q, wanted %q", got, dir)
 	}
 }
 
 func TestBaseDirFallsBackToHome(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("azsel solo se publica para linux y darwin")
+		t.Skip("azsel is only published for linux and darwin")
 	}
 	home := t.TempDir()
 	t.Setenv(config.EnvHome, "")
@@ -45,16 +45,16 @@ func TestBaseDirFallsBackToHome(t *testing.T) {
 		t.Fatalf("BaseDir: %v", err)
 	}
 	if want := filepath.Join(home, ".azsel"); got != want {
-		t.Errorf("BaseDir = %q, quería %q", got, want)
+		t.Errorf("BaseDir = %q, wanted %q", got, want)
 	}
 }
 
-// Preguntar por una ruta no debe tener efectos en el disco. Antes sí los
-// tenía: cada función de ruta hacía MkdirAll.
+// Asking for a path must have no effect on disk. It used to: every path
+// function called MkdirAll.
 func TestPathFunctionsCreateNothing(t *testing.T) {
 	dir := sandbox(t)
 	if err := os.RemoveAll(dir); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 
 	for _, fn := range []struct {
@@ -72,7 +72,7 @@ func TestPathFunctionsCreateNothing(t *testing.T) {
 			t.Fatalf("%s: %v", fn.name, err)
 		}
 		if _, err := os.Stat(dir); !os.IsNotExist(err) {
-			t.Fatalf("%s creó %s", fn.name, dir)
+			t.Fatalf("%s created %s", fn.name, dir)
 		}
 	}
 }
@@ -97,7 +97,7 @@ func TestPathsHangOffBaseDir(t *testing.T) {
 			t.Fatalf("%s: %v", c.name, err)
 		}
 		if got != c.want {
-			t.Errorf("%s = %q, quería %q", c.name, got, c.want)
+			t.Errorf("%s = %q, wanted %q", c.name, got, c.want)
 		}
 	}
 }
@@ -105,18 +105,18 @@ func TestPathsHangOffBaseDir(t *testing.T) {
 func TestEnsureBaseDirCreates(t *testing.T) {
 	dir := sandbox(t)
 	if err := os.RemoveAll(dir); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	if _, err := config.EnsureBaseDir(); err != nil {
 		t.Fatalf("EnsureBaseDir: %v", err)
 	}
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		t.Fatalf("no se creó %s: %v", dir, err)
+		t.Fatalf("%s was not created: %v", dir, err)
 	}
 }
 
-// El bool 'created' es lo que permitirá a #9 revertir un login fallido sin
-// borrar un directorio preexistente con credenciales válidas.
+// The 'created' bool is what will let #9 revert a failed login without
+// deleting a preexisting directory with valid credentials.
 func TestEnsureTenantDirReportsWhoCreatedIt(t *testing.T) {
 	sandbox(t)
 
@@ -125,18 +125,18 @@ func TestEnsureTenantDirReportsWhoCreatedIt(t *testing.T) {
 		t.Fatalf("EnsureTenantDir: %v", err)
 	}
 	if !created {
-		t.Error("created = false en la primera llamada, quería true")
+		t.Error("created = false on the first call, wanted true")
 	}
 	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
-		t.Fatalf("no se creó %s: %v", dir, err)
+		t.Fatalf("%s was not created: %v", dir, err)
 	}
 
 	_, created, err = config.EnsureTenantDir("acme")
 	if err != nil {
-		t.Fatalf("EnsureTenantDir (segunda): %v", err)
+		t.Fatalf("EnsureTenantDir (second): %v", err)
 	}
 	if created {
-		t.Error("created = true sobre un directorio preexistente, quería false")
+		t.Error("created = true on a preexisting directory, wanted false")
 	}
 }
 
@@ -147,10 +147,10 @@ func TestEnsureExtensionsDirCreates(t *testing.T) {
 		t.Fatalf("EnsureExtensionsDir: %v", err)
 	}
 	if want := filepath.Join(dir, "extensions"); got != want {
-		t.Errorf("= %q, quería %q", got, want)
+		t.Errorf("= %q, wanted %q", got, want)
 	}
 	if fi, err := os.Stat(got); err != nil || !fi.IsDir() {
-		t.Fatalf("no se creó %s: %v", got, err)
+		t.Fatalf("%s was not created: %v", got, err)
 	}
 }
 
@@ -158,24 +158,24 @@ func TestLoadMissingFileReturnsEmptyConfig(t *testing.T) {
 	sandbox(t)
 	cfg, err := config.Load()
 	if err != nil {
-		t.Fatalf("Load sobre fichero inexistente devolvió error: %v", err)
+		t.Fatalf("Load on a nonexistent file returned an error: %v", err)
 	}
 	if len(cfg.Tenants) != 0 {
-		t.Errorf("Tenants = %v, quería vacío", cfg.Tenants)
+		t.Errorf("Tenants = %v, wanted empty", cfg.Tenants)
 	}
 }
 
 func TestLoadCorruptJSON(t *testing.T) {
 	dir := sandbox(t)
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte("{no json"), 0644); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	_, err := config.Load()
 	if err == nil {
-		t.Fatal("Load devolvió nil sobre JSON corrupto")
+		t.Fatal("Load returned nil on corrupt JSON")
 	}
 	if !strings.Contains(err.Error(), "parsing config") {
-		t.Errorf("error = %q, quería que mencionara «parsing config»", err)
+		t.Errorf("error = %q, wanted it to mention 'parsing config'", err)
 	}
 }
 
@@ -193,27 +193,27 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	if len(got.Tenants) != len(want.Tenants) {
-		t.Fatalf("%d tenants, quería %d", len(got.Tenants), len(want.Tenants))
+		t.Fatalf("%d tenants, wanted %d", len(got.Tenants), len(want.Tenants))
 	}
 	for i := range want.Tenants {
 		if got.Tenants[i] != want.Tenants[i] {
-			t.Errorf("tenant %d = %+v, quería %+v", i, got.Tenants[i], want.Tenants[i])
+			t.Errorf("tenant %d = %+v, wanted %+v", i, got.Tenants[i], want.Tenants[i])
 		}
 	}
 }
 
-// Save debe crear el directorio base si no existe: es el primer contacto
-// con el disco en una instalación nueva.
+// Save must create the base directory if it does not exist: it is the first
+// contact with disk on a fresh install.
 func TestSaveCreatesBaseDir(t *testing.T) {
 	dir := sandbox(t)
 	if err := os.RemoveAll(dir); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	if err := config.Save(&config.Config{}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "config.json")); err != nil {
-		t.Fatalf("no se escribió config.json: %v", err)
+		t.Fatalf("config.json was not written: %v", err)
 	}
 }
 
@@ -221,21 +221,21 @@ func TestFindTenantIsCaseInsensitive(t *testing.T) {
 	cfg := &config.Config{Tenants: []config.Tenant{{Name: "acme"}}}
 	for _, q := range []string{"acme", "ACME", "AcMe"} {
 		if got := cfg.FindTenant(q); got == nil {
-			t.Errorf("FindTenant(%q) = nil, quería el tenant", q)
+			t.Errorf("FindTenant(%q) = nil, wanted the tenant", q)
 		}
 	}
 	if got := cfg.FindTenant("globex"); got != nil {
-		t.Errorf("FindTenant(\"globex\") = %+v, quería nil", got)
+		t.Errorf("FindTenant(\"globex\") = %+v, wanted nil", got)
 	}
 }
 
-// FindTenant devuelve un puntero al elemento del slice, no una copia: quien
-// lo recibe puede mutar la configuración.
+// FindTenant returns a pointer into the slice, not a copy: the caller can
+// mutate the config.
 func TestFindTenantReturnsPointerIntoSlice(t *testing.T) {
 	cfg := &config.Config{Tenants: []config.Tenant{{Name: "acme", TenantID: "old"}}}
 	cfg.FindTenant("acme").TenantID = "new"
 	if cfg.Tenants[0].TenantID != "new" {
-		t.Errorf("TenantID = %q, quería «new»", cfg.Tenants[0].TenantID)
+		t.Errorf("TenantID = %q, wanted 'new'", cfg.Tenants[0].TenantID)
 	}
 }
 
@@ -245,12 +245,12 @@ func TestAddTenantRejectsDuplicates(t *testing.T) {
 	if err := cfg.AddTenant(config.Tenant{Name: "acme"}); err != nil {
 		t.Fatalf("AddTenant: %v", err)
 	}
-	// El duplicado se detecta sin distinguir mayúsculas, igual que FindTenant.
+	// The duplicate is detected case-insensitively, just like FindTenant.
 	if err := cfg.AddTenant(config.Tenant{Name: "ACME"}); err == nil {
-		t.Fatal("AddTenant aceptó un duplicado")
+		t.Fatal("AddTenant accepted a duplicate")
 	}
 	if len(cfg.Tenants) != 1 {
-		t.Errorf("%d tenants, quería 1", len(cfg.Tenants))
+		t.Errorf("%d tenants, wanted 1", len(cfg.Tenants))
 	}
 }
 
@@ -265,7 +265,7 @@ func TestAddTenantPersists(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	if reloaded.FindTenant("acme") == nil {
-		t.Error("el tenant no se persistió")
+		t.Error("the tenant was not persisted")
 	}
 }
 
@@ -277,17 +277,17 @@ func TestRemoveTenant(t *testing.T) {
 		t.Fatalf("RemoveTenant: %v", err)
 	}
 	if cfg.FindTenant("acme") != nil {
-		t.Error("acme sigue presente")
+		t.Error("acme is still present")
 	}
 	if cfg.FindTenant("globex") == nil {
-		t.Error("RemoveTenant se llevó por delante a globex")
+		t.Error("RemoveTenant took globex down with it")
 	}
 
 	if err := cfg.RemoveTenant("globex"); err != nil {
 		t.Fatalf("RemoveTenant: %v", err)
 	}
 	if len(cfg.Tenants) != 0 {
-		t.Errorf("%d tenants, quería 0", len(cfg.Tenants))
+		t.Errorf("%d tenants, wanted 0", len(cfg.Tenants))
 	}
 
 	reloaded, err := config.Load()
@@ -295,15 +295,15 @@ func TestRemoveTenant(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	if len(reloaded.Tenants) != 0 {
-		t.Errorf("en disco quedan %d tenants, quería 0", len(reloaded.Tenants))
+		t.Errorf("%d tenants left on disk, wanted 0", len(reloaded.Tenants))
 	}
 }
 
 func TestRemoveTenantNotFound(t *testing.T) {
 	sandbox(t)
 	cfg := &config.Config{}
-	if err := cfg.RemoveTenant("fantasma"); err == nil {
-		t.Fatal("RemoveTenant devolvió nil sobre un tenant inexistente")
+	if err := cfg.RemoveTenant("ghost"); err == nil {
+		t.Fatal("RemoveTenant returned nil on a nonexistent tenant")
 	}
 }
 
@@ -317,38 +317,38 @@ func TestWriteEnv(t *testing.T) {
 	path := filepath.Join(dir, ".switch")
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("leyendo .switch: %v", err)
+		t.Fatalf("reading .switch: %v", err)
 	}
 	if string(data) != lines {
-		t.Errorf("contenido = %q, quería %q", data, lines)
+		t.Errorf("content = %q, wanted %q", data, lines)
 	}
 
 	fi, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	// 0600 desde #4: el shell hace source de este fichero, así que su
-	// contenido se ejecuta con los permisos del usuario.
+	// 0600 since #4: the shell sources this file, so its contents run with the
+	// user's permissions.
 	if perm := fi.Mode().Perm(); perm != 0600 {
-		t.Errorf("permisos = %04o, quería 0600", perm)
+		t.Errorf("perms = %04o, wanted 0600", perm)
 	}
 }
 
 func TestWriteEnvCreatesBaseDir(t *testing.T) {
 	dir := sandbox(t)
 	if err := os.RemoveAll(dir); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	if err := config.WriteEnv("export FOO=bar\n"); err != nil {
 		t.Fatalf("WriteEnv: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".switch")); err != nil {
-		t.Fatalf("no se escribió .switch: %v", err)
+		t.Fatalf(".switch was not written: %v", err)
 	}
 }
 
-// El formato en disco es API: la función de shell y cualquier edición manual
-// dependen de estas claves.
+// The on-disk format is API: the shell function and any manual editing depend
+// on these keys.
 func TestConfigJSONShape(t *testing.T) {
 	sandbox(t)
 	if err := config.Save(&config.Config{Tenants: []config.Tenant{
@@ -359,7 +359,7 @@ func TestConfigJSONShape(t *testing.T) {
 	path, _ := config.ConfigPath()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("leyendo: %v", err)
+		t.Fatalf("reading: %v", err)
 	}
 	var raw map[string]any
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -367,12 +367,12 @@ func TestConfigJSONShape(t *testing.T) {
 	}
 	tenants, ok := raw["tenants"].([]any)
 	if !ok || len(tenants) != 1 {
-		t.Fatalf("clave «tenants» = %v", raw["tenants"])
+		t.Fatalf("'tenants' key = %v", raw["tenants"])
 	}
 	first := tenants[0].(map[string]any)
 	for _, key := range []string{"name", "tenantId", "configDir"} {
 		if _, ok := first[key]; !ok {
-			t.Errorf("falta la clave %q en el JSON", key)
+			t.Errorf("missing key %q in the JSON", key)
 		}
 	}
 }

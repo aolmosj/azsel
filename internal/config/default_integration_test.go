@@ -71,7 +71,7 @@ func TestIntegrationAzFollowsDefaultLink(t *testing.T) {
 
 	tenant := cfg.FindTenant("contoso").ConfigDir
 	if !wrote(tenant) {
-		t.Error("az no escribió en el tenant por defecto vía el enlace")
+		t.Error("az did not write to the default tenant via the link")
 	}
 }
 
@@ -87,10 +87,10 @@ func TestIntegrationConfigDirOverridesLink(t *testing.T) {
 	azConfigSet(t, az, home, other)
 
 	if !wrote(other) {
-		t.Error("az no respetó AZURE_CONFIG_DIR")
+		t.Error("az did not honor AZURE_CONFIG_DIR")
 	}
 	if wrote(cfg.FindTenant("contoso").ConfigDir) {
-		t.Error("az escribió en el default pese a AZURE_CONFIG_DIR; la variable debe ganar")
+		t.Error("az wrote to the default despite AZURE_CONFIG_DIR; the variable must win")
 	}
 }
 
@@ -100,10 +100,10 @@ func TestIntegrationNoDefaultUsesNativeAzure(t *testing.T) {
 	home, _ := azureSandbox(t)
 	azure := filepath.Join(home, ".azure")
 	if err := os.MkdirAll(azure, 0755); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	azConfigSet(t, az, home, "")
 	if !wrote(azure) {
-		t.Error("az no usó su ~/.azure nativo sin default")
+		t.Error("az did not use its native ~/.azure with no default")
 	}
 }

@@ -18,18 +18,18 @@ func removeSandbox(t *testing.T, tenants ...string) (home string, cfg *config.Co
 	for _, name := range tenants {
 		dir, _, err := config.EnsureTenantDir(name)
 		if err != nil {
-			t.Fatalf("preparando: %v", err)
+			t.Fatalf("setup: %v", err)
 		}
 		cfg.Tenants = append(cfg.Tenants, config.Tenant{Name: name, ConfigDir: dir})
 	}
 	if err := config.Save(cfg); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	return home, cfg
 }
 
-// Borrar el tenant por defecto debe eliminar el enlace ANTES de borrar el
-// directorio; si no, ~/.azure queda colgando y az revienta.
+// Removing the default tenant must clear the link BEFORE deleting the
+// directory; otherwise ~/.azure is left dangling and az blows up.
 func TestRemoveDefaultTenantClearsLink(t *testing.T) {
 	home, cfg := removeSandbox(t, "contoso")
 	if _, err := config.SetDefault(cfg, "contoso", "20260220-120000"); err != nil {
@@ -41,21 +41,21 @@ func TestRemoveDefaultTenantClearsLink(t *testing.T) {
 		t.Fatalf("remove: %v", err)
 	}
 
-	// El enlace no debe quedar, ni colgando ni de ningún tipo.
+	// The link must not remain, neither dangling nor of any kind.
 	if _, err := os.Lstat(filepath.Join(home, ".azure")); !os.IsNotExist(err) {
-		t.Errorf("~/.azure sigue existiendo tras borrar el tenant por defecto (err=%v)", err)
+		t.Errorf("~/.azure still exists after removing the default tenant (err=%v)", err)
 	}
-	// Y el tenant desapareció del config.
+	// And the tenant disappeared from the config.
 	reloaded, err := config.Load()
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	if reloaded.FindTenant("contoso") != nil {
-		t.Error("el tenant sigue en config.json")
+		t.Error("the tenant is still in config.json")
 	}
 }
 
-// Borrar un tenant que NO es el default deja el enlace intacto.
+// Removing a tenant that is NOT the default leaves the link intact.
 func TestRemoveNonDefaultTenantLeavesLink(t *testing.T) {
 	home, cfg := removeSandbox(t, "contoso", "fabrikam")
 	if _, err := config.SetDefault(cfg, "contoso", "20260220-120000"); err != nil {
@@ -67,36 +67,36 @@ func TestRemoveNonDefaultTenantLeavesLink(t *testing.T) {
 		t.Fatalf("remove: %v", err)
 	}
 
-	// El enlace a contoso sigue vivo y apuntando bien.
+	// The link to contoso is still alive and pointing correctly.
 	got, err := os.Readlink(filepath.Join(home, ".azure"))
 	if err != nil {
-		t.Fatalf("el enlace del default desapareció: %v", err)
+		t.Fatalf("the default's link disappeared: %v", err)
 	}
 	if want := cfg.FindTenant("contoso").ConfigDir; got != want {
-		t.Errorf("~/.azure -> %q, quería %q", got, want)
+		t.Errorf("~/.azure -> %q, wanted %q", got, want)
 	}
 }
 
-// Bug del review: si el enlace del default ya está roto (el tenant borrado a
-// mano) y luego se hace `azsel remove`, el enlace quedaba colgando porque el
-// guard solo miraba DefaultSet, no DefaultBroken.
+// Bug from the review: if the default's link is already broken (the tenant
+// deleted by hand) and then `azsel remove` is run, the link was left dangling
+// because the guard only looked at DefaultSet, not DefaultBroken.
 func TestRemoveTenantWithAlreadyBrokenDefaultLink(t *testing.T) {
 	home, cfg := removeSandbox(t, "contoso")
 	if _, err := config.SetDefault(cfg, "contoso", "20260220-120000"); err != nil {
 		t.Fatalf("SetDefault: %v", err)
 	}
-	// Rompemos el enlace borrando el directorio del tenant a mano — ahora
-	// ~/.azure es un enlace colgando hacia contoso.
+	// We break the link by deleting the tenant's directory by hand — now
+	// ~/.azure is a dangling link to contoso.
 	if err := os.RemoveAll(filepath.Join(home, ".azsel", "tenants", "contoso")); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	quiet(t)
 
 	if err := run(t, newRemoveCmd(), "contoso", "-f"); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	// El enlace roto no debe sobrevivir a la eliminación.
+	// The broken link must not survive the removal.
 	if _, err := os.Lstat(filepath.Join(home, ".azure")); !os.IsNotExist(err) {
-		t.Errorf("~/.azure sigue existiendo (colgando) tras borrar el tenant (err=%v)", err)
+		t.Errorf("~/.azure still exists (dangling) after removing the tenant (err=%v)", err)
 	}
 }
