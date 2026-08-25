@@ -53,10 +53,22 @@ var (
 			Background(azureBlue).
 			Padding(0, 1)
 
-	confirmStyle = lipgloss.NewStyle().
-			Foreground(white).
-			Background(azureBlue).
-			Padding(0, 1)
+	// The set-default confirmation is a centered modal so it cannot be missed,
+	// however long the tenant list is.
+	confirmBoxStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(azureBlue).
+			Padding(1, 3)
+
+	confirmTitleStyle = lipgloss.NewStyle().
+				Foreground(white).
+				Background(azureBlue).
+				Bold(true).
+				Padding(0, 1)
+
+	confirmKeysStyle = lipgloss.NewStyle().
+				Foreground(azureBlue).
+				Bold(true)
 
 	statusMsgStyle = lipgloss.NewStyle().
 			Foreground(azureLight)
