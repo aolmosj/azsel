@@ -10,29 +10,29 @@ import (
 	"github.com/aolmosj/azsel/internal/config"
 )
 
-// unusableHome apunta AZSEL_HOME a una ruta que cuelga de un fichero. Todo
-// intento de crear directorios ahí falla con ENOTDIR. Es más fiable que jugar
-// con permisos: root los ignoraría.
+// unusableHome points AZSEL_HOME at a path hanging off a file. Any attempt to
+// create directories there fails with ENOTDIR. It is more reliable than
+// playing with permissions: root would ignore them.
 func unusableHome(t *testing.T) {
 	t.Helper()
-	blocker := filepath.Join(t.TempDir(), "soy-un-fichero")
+	blocker := filepath.Join(t.TempDir(), "a-file")
 	if err := os.WriteFile(blocker, nil, 0644); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	t.Setenv(config.EnvHome, filepath.Join(blocker, "azsel"))
 }
 
 func TestBaseDirFailsWithoutHome(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("azsel solo se publica para linux y darwin")
+		t.Skip("azsel is only published for linux and darwin")
 	}
 	t.Setenv(config.EnvHome, "")
 	t.Setenv("HOME", "")
 
 	if _, err := config.BaseDir(); err == nil {
-		t.Fatal("BaseDir devolvió nil sin HOME definido")
+		t.Fatal("BaseDir returned nil with no HOME defined")
 	} else if !strings.Contains(err.Error(), "home directory") {
-		t.Errorf("error = %q, quería que mencionara el home", err)
+		t.Errorf("error = %q, wanted it to mention the home", err)
 	}
 }
 
@@ -65,68 +65,70 @@ func TestEnsureFuncsFailOnUnusableBaseDir(t *testing.T) {
 			unusableHome(t)
 			err := c.call()
 			if err == nil {
-				t.Fatalf("%s devolvió nil sobre un directorio base inservible", c.name)
+				t.Fatalf("%s returned nil on an unusable base directory", c.name)
 			}
 			if c.want != "" && !strings.Contains(err.Error(), c.want) {
-				t.Errorf("error = %q, quería que mencionara %q", err, c.want)
+				t.Errorf("error = %q, wanted it to mention %q", err, c.want)
 			}
 		})
 	}
 }
 
-// Un config.json que resulta ser un directorio no es «no existe»: es un error
-// de lectura real y Load debe propagarlo en vez de devolver config vacía.
+// A config.json that turns out to be a directory is not "does not exist": it
+// is a real read error and Load must propagate it instead of returning an
+// empty config.
 func TestLoadFailsWhenConfigPathIsADirectory(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(config.EnvHome, dir)
 	if err := os.MkdirAll(filepath.Join(dir, "config.json"), 0755); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 
 	if _, err := config.Load(); err == nil {
-		t.Fatal("Load devolvió nil con config.json siendo un directorio")
+		t.Fatal("Load returned nil with config.json being a directory")
 	} else if !strings.Contains(err.Error(), "reading config") {
-		t.Errorf("error = %q, quería que mencionara «reading config»", err)
+		t.Errorf("error = %q, wanted it to mention 'reading config'", err)
 	}
 }
 
-// Una ruta ocupada por un fichero no es un perfil existente. os.Stat tiene
-// éxito sobre un fichero, así que sin comprobar IsDir se colaría como
-// «ya existe» y el fallo aparecería mucho después, dentro de az.
+// A path taken by a file is not an existing profile. os.Stat succeeds on a
+// file, so without checking IsDir it would slip through as "already exists"
+// and the failure would surface much later, inside az.
 func TestEnsureTenantDirRejectsPathTakenByAFile(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(config.EnvHome, dir)
 	tenants := filepath.Join(dir, "tenants")
 	if err := os.MkdirAll(tenants, 0755); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(tenants, "acme"), nil, 0644); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 
 	_, created, err := config.EnsureTenantDir("acme")
 	if err == nil {
-		t.Fatal("EnsureTenantDir devolvió nil sobre una ruta ocupada por un fichero")
+		t.Fatal("EnsureTenantDir returned nil on a path taken by a file")
 	}
 	if !strings.Contains(err.Error(), "not a directory") {
-		t.Errorf("error = %q, quería que mencionara «not a directory»", err)
+		t.Errorf("error = %q, wanted it to mention 'not a directory'", err)
 	}
-	// Nada creado: un rollback futuro (#9) no debe borrar lo que no puso él.
+	// Nothing created: a future rollback (#9) must not delete what it did not
+	// put there.
 	if created {
-		t.Error("created = true, quería false")
+		t.Error("created = true, wanted false")
 	}
 }
 
-// Lo mismo para el directorio base y el de extensiones.
+// The same for the base directory and the extensions one.
 func TestEnsureDirsRejectPathTakenByAFile(t *testing.T) {
 	t.Run("base", func(t *testing.T) {
 		blocker := filepath.Join(t.TempDir(), "azsel")
 		if err := os.WriteFile(blocker, nil, 0644); err != nil {
-			t.Fatalf("preparando: %v", err)
+			t.Fatalf("setup: %v", err)
 		}
 		t.Setenv(config.EnvHome, blocker)
 		if _, err := config.EnsureBaseDir(); err == nil {
-			t.Fatal("EnsureBaseDir devolvió nil sobre un fichero")
+			t.Fatal("EnsureBaseDir returned nil on a file")
 		}
 	})
 
@@ -134,10 +136,10 @@ func TestEnsureDirsRejectPathTakenByAFile(t *testing.T) {
 		dir := t.TempDir()
 		t.Setenv(config.EnvHome, dir)
 		if err := os.WriteFile(filepath.Join(dir, "extensions"), nil, 0644); err != nil {
-			t.Fatalf("preparando: %v", err)
+			t.Fatalf("setup: %v", err)
 		}
 		if _, err := config.EnsureExtensionsDir(); err == nil {
-			t.Fatal("EnsureExtensionsDir devolvió nil sobre un fichero")
+			t.Fatal("EnsureExtensionsDir returned nil on a file")
 		}
 	})
 }
@@ -151,6 +153,6 @@ func TestWriteEnvWithDebugEnabled(t *testing.T) {
 		t.Fatalf("WriteEnv: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".switch")); err != nil {
-		t.Fatalf("no se escribió .switch: %v", err)
+		t.Fatalf(".switch was not written: %v", err)
 	}
 }

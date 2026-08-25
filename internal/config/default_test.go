@@ -22,7 +22,7 @@ func azureSandbox(t *testing.T, tenants ...string) (home string, cfg *config.Con
 	for _, name := range tenants {
 		dir, _, err := config.EnsureTenantDir(name)
 		if err != nil {
-			t.Fatalf("preparando tenant %q: %v", name, err)
+			t.Fatalf("setup tenant %q: %v", name, err)
 		}
 		cfg.Tenants = append(cfg.Tenants, config.Tenant{Name: name, ConfigDir: dir})
 	}
@@ -41,25 +41,25 @@ func TestResolveDefaultNone(t *testing.T) {
 		t.Fatalf("ResolveDefault: %v", err)
 	}
 	if info.State != config.DefaultNone {
-		t.Errorf("State = %v, quería DefaultNone", info.State)
+		t.Errorf("State = %v, wanted DefaultNone", info.State)
 	}
 	if info.Tenant != "" {
-		t.Errorf("Tenant = %q, quería vacío", info.Tenant)
+		t.Errorf("Tenant = %q, wanted empty", info.Tenant)
 	}
 }
 
 func TestResolveDefaultNative(t *testing.T) {
 	home, cfg := azureSandbox(t)
-	// ~/.azure es un directorio real: el perfil nativo de az.
+	// ~/.azure is a real directory: az's native profile.
 	if err := os.MkdirAll(azurePath(t, home), 0755); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	info, err := config.ResolveDefault(cfg)
 	if err != nil {
 		t.Fatalf("ResolveDefault: %v", err)
 	}
 	if info.State != config.DefaultNative {
-		t.Errorf("State = %v, quería DefaultNative", info.State)
+		t.Errorf("State = %v, wanted DefaultNative", info.State)
 	}
 }
 
@@ -67,152 +67,153 @@ func TestResolveDefaultSet(t *testing.T) {
 	home, cfg := azureSandbox(t, "contoso")
 	target := cfg.FindTenant("contoso").ConfigDir
 	if err := os.Symlink(target, azurePath(t, home)); err != nil {
-		t.Fatalf("preparando enlace: %v", err)
+		t.Fatalf("setup link: %v", err)
 	}
 	info, err := config.ResolveDefault(cfg)
 	if err != nil {
 		t.Fatalf("ResolveDefault: %v", err)
 	}
 	if info.State != config.DefaultSet {
-		t.Fatalf("State = %v, quería DefaultSet", info.State)
+		t.Fatalf("State = %v, wanted DefaultSet", info.State)
 	}
 	if info.Tenant != "contoso" {
-		t.Errorf("Tenant = %q, quería «contoso»", info.Tenant)
+		t.Errorf("Tenant = %q, wanted 'contoso'", info.Tenant)
 	}
 	if info.Target != target {
-		t.Errorf("Target = %q, quería %q", info.Target, target)
+		t.Errorf("Target = %q, wanted %q", info.Target, target)
 	}
 }
 
-// Enlace a un directorio dentro de ~/.azsel/tenants pero de un tenant que no
-// está en config.json: no es un default de azsel.
+// Link to a directory inside ~/.azsel/tenants but of a tenant not in
+// config.json: it is not an azsel default.
 func TestResolveDefaultUnknownTenant(t *testing.T) {
 	home, cfg := azureSandbox(t, "contoso")
-	// Creamos el directorio de 'fabrikam' pero NO lo añadimos al config.
+	// We create 'fabrikam's directory but do NOT add it to the config.
 	ghost, _, err := config.EnsureTenantDir("fabrikam")
 	if err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	if err := os.Symlink(ghost, azurePath(t, home)); err != nil {
-		t.Fatalf("preparando enlace: %v", err)
+		t.Fatalf("setup link: %v", err)
 	}
 	info, err := config.ResolveDefault(cfg)
 	if err != nil {
 		t.Fatalf("ResolveDefault: %v", err)
 	}
 	if info.State != config.DefaultForeign {
-		t.Errorf("State = %v, quería DefaultForeign (tenant desconocido)", info.State)
+		t.Errorf("State = %v, wanted DefaultForeign (unknown tenant)", info.State)
 	}
 }
 
-// Enlace a algo completamente fuera de ~/.azsel.
+// Link to something completely outside ~/.azsel.
 func TestResolveDefaultForeign(t *testing.T) {
 	home, cfg := azureSandbox(t)
 	outside := t.TempDir()
 	if err := os.Symlink(outside, azurePath(t, home)); err != nil {
-		t.Fatalf("preparando enlace: %v", err)
+		t.Fatalf("setup link: %v", err)
 	}
 	info, err := config.ResolveDefault(cfg)
 	if err != nil {
 		t.Fatalf("ResolveDefault: %v", err)
 	}
 	if info.State != config.DefaultForeign {
-		t.Errorf("State = %v, quería DefaultForeign", info.State)
+		t.Errorf("State = %v, wanted DefaultForeign", info.State)
 	}
 	if info.Target != outside {
-		t.Errorf("Target = %q, quería %q", info.Target, outside)
+		t.Errorf("Target = %q, wanted %q", info.Target, outside)
 	}
 }
 
-// El caso peligroso: enlace cuyo destino ya no existe. az revienta con esto,
-// así que hay que distinguirlo.
+// The dangerous case: a link whose target no longer exists. az blows up on
+// this, so it must be distinguished.
 func TestResolveDefaultBroken(t *testing.T) {
 	home, cfg := azureSandbox(t, "contoso")
 	target := cfg.FindTenant("contoso").ConfigDir
 	if err := os.Symlink(target, azurePath(t, home)); err != nil {
-		t.Fatalf("preparando enlace: %v", err)
+		t.Fatalf("setup link: %v", err)
 	}
-	// Borramos el destino: el enlace queda colgando.
+	// Delete the target: the link dangles.
 	if err := os.RemoveAll(target); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	info, err := config.ResolveDefault(cfg)
 	if err != nil {
 		t.Fatalf("ResolveDefault: %v", err)
 	}
 	if info.State != config.DefaultBroken {
-		t.Errorf("State = %v, quería DefaultBroken", info.State)
+		t.Errorf("State = %v, wanted DefaultBroken", info.State)
 	}
 	if info.Target != target {
-		t.Errorf("Target = %q, quería %q para poder diagnosticar", info.Target, target)
+		t.Errorf("Target = %q, wanted %q to be able to diagnose", info.Target, target)
 	}
 }
 
-// Un enlace escrito con ruta relativa debe resolverse igual que uno absoluto.
+// A link written with a relative path must resolve the same as an absolute
+// one.
 func TestResolveDefaultRelativeSymlink(t *testing.T) {
 	home, cfg := azureSandbox(t, "contoso")
 	target := cfg.FindTenant("contoso").ConfigDir
 	rel, err := filepath.Rel(home, target)
 	if err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
-	// Enlace relativo desde ~/ hacia .azsel/tenants/contoso
+	// Relative link from ~/ to .azsel/tenants/contoso
 	if err := os.Symlink(rel, azurePath(t, home)); err != nil {
-		t.Fatalf("preparando enlace relativo: %v", err)
+		t.Fatalf("setup relative link: %v", err)
 	}
 	info, err := config.ResolveDefault(cfg)
 	if err != nil {
 		t.Fatalf("ResolveDefault: %v", err)
 	}
 	if info.State != config.DefaultSet || info.Tenant != "contoso" {
-		t.Errorf("State=%v Tenant=%q, quería DefaultSet/contoso", info.State, info.Tenant)
+		t.Errorf("State=%v Tenant=%q, wanted DefaultSet/contoso", info.State, info.Tenant)
 	}
 }
 
-// Un enlace que apunta MÁS ADENTRO de un tenant (no al directorio del tenant)
-// no debe contar como default de azsel.
+// A link pointing DEEPER INTO a tenant (not at the tenant's directory) must
+// not count as an azsel default.
 func TestResolveDefaultLinkDeeperThanTenant(t *testing.T) {
 	home, cfg := azureSandbox(t, "contoso")
 	sub := filepath.Join(cfg.FindTenant("contoso").ConfigDir, "cliextensions")
 	if err := os.MkdirAll(sub, 0755); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	if err := os.Symlink(sub, azurePath(t, home)); err != nil {
-		t.Fatalf("preparando enlace: %v", err)
+		t.Fatalf("setup link: %v", err)
 	}
 	info, err := config.ResolveDefault(cfg)
 	if err != nil {
 		t.Fatalf("ResolveDefault: %v", err)
 	}
 	if info.State != config.DefaultForeign {
-		t.Errorf("State = %v, quería DefaultForeign (apunta dentro del tenant, no al tenant)", info.State)
+		t.Errorf("State = %v, wanted DefaultForeign (points inside the tenant, not at the tenant)", info.State)
 	}
 }
 
-// AzureDir necesita HOME para poder situar ~/.azure.
+// AzureDir needs HOME to locate ~/.azure.
 func TestAzureDirNeedsHome(t *testing.T) {
 	t.Setenv("HOME", "")
 	if _, err := config.AzureDir(); err == nil {
-		t.Fatal("AzureDir devolvió nil sin HOME")
+		t.Fatal("AzureDir returned nil with no HOME")
 	}
 }
 
-// Un fallo al resolver el destino del enlace que NO sea «no existe» —aquí un
-// componente de la ruta que es un fichero, no un directorio— debe propagarse
-// como error, no confundirse con un enlace roto.
+// A failure to resolve the link target that is NOT "does not exist" — here a
+// path component that is a file, not a directory — must propagate as an error,
+// not be confused with a broken link.
 func TestResolveDefaultTargetStatError(t *testing.T) {
 	home, cfg := azureSandbox(t)
-	// Un fichero donde debería haber un directorio, y el enlace apunta a algo
-	// por debajo de él: Stat falla con ENOTDIR, que no es IsNotExist.
-	blocker := filepath.Join(t.TempDir(), "fichero")
+	// A file where a directory should be, and the link points at something
+	// below it: Stat fails with ENOTDIR, which is not IsNotExist.
+	blocker := filepath.Join(t.TempDir(), "file")
 	if err := os.WriteFile(blocker, nil, 0644); err != nil {
-		t.Fatalf("preparando: %v", err)
+		t.Fatalf("setup: %v", err)
 	}
 	if err := os.Symlink(filepath.Join(blocker, "dentro"), azurePath(t, home)); err != nil {
-		t.Fatalf("preparando enlace: %v", err)
+		t.Fatalf("setup link: %v", err)
 	}
 	_, err := config.ResolveDefault(cfg)
 	if err == nil {
-		t.Fatal("ResolveDefault no propagó el error de Stat del destino")
+		t.Fatal("ResolveDefault did not propagate the target's Stat error")
 	}
 }

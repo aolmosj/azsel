@@ -2,40 +2,40 @@ package cmd
 
 import "testing"
 
-// nameRegex decide qué nombres de tenant se aceptan. El nombre acaba siendo
-// un directorio bajo ~/.azsel/tenants/, así que la restricción no es
-// cosmética: filtra separadores de ruta y espacios.
+// nameRegex decides which tenant names are accepted. The name ends up being
+// a directory under ~/.azsel/tenants/, so the restriction is not cosmetic:
+// it filters out path separators and spaces.
 func TestNameRegex(t *testing.T) {
 	cases := []struct {
 		name  string
 		valid bool
 		why   string
 	}{
-		{"a", true, "un solo carácter"},
-		{"acme", true, "minúsculas"},
-		{"acme-corp", true, "guión interior"},
-		{"client-1", true, "dígitos"},
-		{"1", true, "solo dígito"},
-		{"a-b-c-d", true, "varios guiones"},
+		{"a", true, "a single character"},
+		{"acme", true, "lowercase"},
+		{"acme-corp", true, "interior hyphen"},
+		{"client-1", true, "digits"},
+		{"1", true, "digit only"},
+		{"a-b-c-d", true, "several hyphens"},
 
-		{"", false, "vacío"},
-		{"-acme", false, "empieza por guión"},
-		{"acme-", false, "acaba en guión"},
-		{"-", false, "solo un guión"},
-		{"ACME", false, "mayúsculas"},
-		{"Acme", false, "mayúscula inicial"},
-		{"acme_corp", false, "guión bajo"},
-		{"acme corp", false, "espacio"},
-		{"acme.corp", false, "punto"},
-		{"acme/corp", false, "separador de ruta"},
-		{"..", false, "recorrido de directorios"},
-		{"acmé", false, "carácter acentuado"},
-		{"acme\n", false, "salto de línea"},
+		{"", false, "empty"},
+		{"-acme", false, "starts with a hyphen"},
+		{"acme-", false, "ends in a hyphen"},
+		{"-", false, "just a hyphen"},
+		{"ACME", false, "uppercase"},
+		{"Acme", false, "leading uppercase"},
+		{"acme_corp", false, "underscore"},
+		{"acme corp", false, "space"},
+		{"acme.corp", false, "dot"},
+		{"acme/corp", false, "path separator"},
+		{"..", false, "directory traversal"},
+		{"acmé", false, "accented character"},
+		{"acme\n", false, "newline"},
 	}
 
 	for _, c := range cases {
 		if got := nameRegex.MatchString(c.name); got != c.valid {
-			t.Errorf("nameRegex(%q) = %v, quería %v (%s)", c.name, got, c.valid, c.why)
+			t.Errorf("nameRegex(%q) = %v, wanted %v (%s)", c.name, got, c.valid, c.why)
 		}
 	}
 }

@@ -15,9 +15,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # azsel se publica para linux y darwin (ver .goreleaser.yaml). La
-        # detección de shell y las rutas de configuración difieren entre
-        # ambos, así que conviene ejercitar los dos.
+        # azsel is published for linux and darwin (see .goreleaser.yaml).
+        # Shell detection and the configuration paths differ between both, so
+        # it is worth exercising the two of them.
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
@@ -92,7 +92,7 @@ jobs:
         run: |
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
-            echo "Estos ficheros no están formateados:"
+            echo "These files are not formatted:"
             echo "$unformatted"
             echo
             gofmt -d .

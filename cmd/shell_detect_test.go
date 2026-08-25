@@ -12,16 +12,16 @@ func TestDetectShellRC(t *testing.T) {
 		name       string
 		shell      string
 		makeBashrc bool
-		wantRC     string // relativo al home; "" = no soportado
+		wantRC     string // relative to home; "" = unsupported
 		wantShell  string
 	}{
 		{"zsh", "/bin/zsh", false, ".zshrc", "zsh"},
-		{"zsh en otra ruta", "/opt/homebrew/bin/zsh", false, ".zshrc", "zsh"},
-		{"bash con bashrc", "/bin/bash", true, ".bashrc", "bash"},
-		{"bash sin bashrc", "/bin/bash", false, ".bash_profile", "bash"},
+		{"zsh at another path", "/opt/homebrew/bin/zsh", false, ".zshrc", "zsh"},
+		{"bash with bashrc", "/bin/bash", true, ".bashrc", "bash"},
+		{"bash without bashrc", "/bin/bash", false, ".bash_profile", "bash"},
 		{"fish", "/opt/homebrew/bin/fish", false, "", "fish"},
 		{"sh", "/bin/sh", false, "", "sh"},
-		{"SHELL vacío", "", false, "", ""},
+		{"empty SHELL", "", false, "", ""},
 	}
 
 	for _, c := range cases {
@@ -31,7 +31,7 @@ func TestDetectShellRC(t *testing.T) {
 			t.Setenv("SHELL", c.shell)
 			if c.makeBashrc {
 				if err := os.WriteFile(filepath.Join(home, ".bashrc"), nil, 0644); err != nil {
-					t.Fatalf("preparando: %v", err)
+					t.Fatalf("setup: %v", err)
 				}
 			}
 
@@ -44,54 +44,54 @@ func TestDetectShellRC(t *testing.T) {
 				want = filepath.Join(home, c.wantRC)
 			}
 			if rc != want {
-				t.Errorf("rcFile = %q, quería %q", rc, want)
+				t.Errorf("rcFile = %q, wanted %q", rc, want)
 			}
 			if shell != c.wantShell {
-				t.Errorf("shellName = %q, quería %q", shell, c.wantShell)
+				t.Errorf("shellName = %q, wanted %q", shell, c.wantShell)
 			}
 		})
 	}
 }
 
-// El mensaje anterior decía "add this manually to your shell rc", lo cual es
-// falso para fish: la función usa sintaxis bash/zsh que fish no interpreta.
+// The previous message said "add this manually to your shell rc", which is
+// false for fish: the function uses bash/zsh syntax that fish doesn't interpret.
 func TestUnsupportedShellErrorIsHonest(t *testing.T) {
 	got := unsupportedShellError("fish").Error()
 
 	if !strings.Contains(got, "fish") {
-		t.Errorf("el error no nombra el shell detectado:\n%s", got)
+		t.Errorf("the error does not name the detected shell:\n%s", got)
 	}
 	if !strings.Contains(got, "bash and zsh") {
-		t.Errorf("el error no dice qué shells sí están soportados:\n%s", got)
+		t.Errorf("the error does not say which shells are supported:\n%s", got)
 	}
-	// Debe ofrecer la salida que sí funciona en cualquier shell.
+	// It should offer the way out that does work in any shell.
 	if !strings.Contains(got, "azsel use") {
-		t.Errorf("el error no menciona la alternativa vía script:\n%s", got)
+		t.Errorf("the error does not mention the script-based alternative:\n%s", got)
 	}
 }
 
 func TestUnsupportedShellErrorWithoutShellEnv(t *testing.T) {
 	got := unsupportedShellError("").Error()
 	if !strings.Contains(got, "$SHELL") {
-		t.Errorf("sin SHELL definido, el error debería mencionarlo:\n%s", got)
+		t.Errorf("with no SHELL set, the error should mention it:\n%s", got)
 	}
 }
 
-// Un fallo al resolver el home es su propio problema, no un shell no
-// soportado. Antes se reportaba como lo segundo, de modo que a un usuario de
-// zsh se le decía que zsh no está soportado.
+// A failure to resolve the home is its own problem, not an unsupported shell.
+// It used to be reported as the latter, so that a zsh user was told that zsh
+// is not supported.
 func TestDetectShellRCSeparatesHomeFailure(t *testing.T) {
 	t.Setenv("SHELL", "/bin/zsh")
 	t.Setenv("HOME", "")
 
 	rc, shell, err := detectShellRC()
 	if err == nil {
-		t.Fatal("detectShellRC devolvió nil sin HOME")
+		t.Fatal("detectShellRC returned nil with no HOME")
 	}
 	if !strings.Contains(err.Error(), "home directory") {
-		t.Errorf("error = %q, quería que mencionara el home", err)
+		t.Errorf("error = %q, wanted it to mention the home", err)
 	}
 	if rc != "" || shell != "" {
-		t.Errorf("rcFile=%q shellName=%q, quería ambos vacíos ante un error", rc, shell)
+		t.Errorf("rcFile=%q shellName=%q, wanted both empty on an error", rc, shell)
 	}
 }

@@ -1,10 +1,10 @@
 version: "2"
 
 linters:
-  # Conjunto explícito, no el de por defecto. Cada linter está aquí porque
-  # cubre algo que `go vet` no mira. staticcheck se deja para más adelante y
-  # en un PR aparte: es el que más ruido genera de entrada y conviene que su
-  # triaje no se mezcle con el del resto.
+  # Explicit set, not the default set. Each linter is here because it covers
+  # something `go vet` does not look at. staticcheck is left for later and in
+  # a separate PR: it is the noisiest one up front and its triage should not
+  # get mixed in with the rest.
   default: none
   enable:
     - errcheck
@@ -15,10 +15,10 @@ linters:
 
   settings:
     errcheck:
-      # Toda la salida visible de azsel va a stderr, y la tabla de `list` pasa
-      # por un tabwriter cuyo Flush() sí se comprueba — que es donde aflora
-      # cualquier error de escritura. Comprobar cada Fprintf a stderr solo
-      # añadiría ruido sin cubrir nada.
+      # All of azsel's visible output goes to stderr, and the `list` table
+      # passes through a tabwriter whose Flush() is checked — which is where
+      # any write error surfaces. Checking every Fprintf to stderr would only
+      # add noise without covering anything.
       exclude-functions:
         - fmt.Fprint
         - fmt.Fprintf
@@ -26,32 +26,32 @@ linters:
 
   exclusions:
     rules:
-      # Los tests crean ficheros y directorios con permisos concretos a
-      # propósito: en varios casos el permiso *es* lo que se está probando.
+      # The tests create files and directories with specific permissions on
+      # purpose: in several cases the permission *is* what is being tested.
       - path: _test\.go
         linters:
           - gosec
 
-      # Ejecutar az con argumentos variables es la razón de ser del paquete.
-      # El binario es una constante y los argumentos van como elementos de
-      # argv, no a través de un shell, así que no hay inyección posible.
+      # Running az with variable arguments is the whole reason the package
+      # exists. The binary is a constant and the arguments go as elements of
+      # argv, not through a shell, so no injection is possible.
       - path: internal/azure/azure\.go
         linters:
           - gosec
         text: "G204"
 
-      # La ruta sale de BaseDir(), que es del propio azsel (o de AZSEL_HOME,
-      # que define el usuario para sí mismo). No hay entrada externa.
+      # The path comes from BaseDir(), which belongs to azsel itself (or from
+      # AZSEL_HOME, which the user defines for themselves). No external input.
       - path: internal/config/config\.go
         linters:
           - gosec
         text: "G304"
 
-      # G302: 0644 es la convención para un fichero rc de shell, y el flag
-      # O_CREATE solo aplica permisos cuando el fichero no existe — lo normal
-      # es que ya esté ahí.
-      # G304: la ruta la produce detectShellRC() a partir de $SHELL y $HOME
-      # del propio usuario. No hay entrada externa.
+      # G302: 0644 is the convention for a shell rc file, and the O_CREATE
+      # flag only applies permissions when the file does not exist — normally
+      # it is already there.
+      # G304: the path is produced by detectShellRC() from the user's own
+      # $SHELL and $HOME. No external input.
       - path: cmd/init\.go
         linters:
           - gosec

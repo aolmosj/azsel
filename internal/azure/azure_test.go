@@ -59,7 +59,7 @@ func TestLoginArguments(t *testing.T) {
 		deviceCode bool
 		want       []string
 	}{
-		{"navegador", false, []string{"az", "login", "--tenant", "TID"}},
+		{"browser", false, []string{"az", "login", "--tenant", "TID"}},
 		{"device code", true, []string{"az", "login", "--tenant", "TID", "--use-device-code"}},
 	}
 	for _, c := range cases {
@@ -69,13 +69,13 @@ func TestLoginArguments(t *testing.T) {
 				t.Fatalf("Login: %v", err)
 			}
 			if !slices.Equal(got.cmd.Args, c.want) {
-				t.Errorf("args = %v, quería %v", got.cmd.Args, c.want)
+				t.Errorf("args = %v, wanted %v", got.cmd.Args, c.want)
 			}
 		})
 	}
 }
 
-// El aislamiento entre tenants depende enteramente de estas dos variables.
+// Isolation between tenants rests entirely on these two variables.
 func TestLoginScopesTheEnvironment(t *testing.T) {
 	// One snapshot of the environment, taken here, is the baseline for both
 	// what command() inherits and what the test measures — reading
@@ -88,7 +88,7 @@ func TestLoginScopesTheEnvironment(t *testing.T) {
 	}
 
 	if v, ok := envValue(got.cmd, "AZURE_CONFIG_DIR"); !ok || v != "/cfg/acme" {
-		t.Errorf("AZURE_CONFIG_DIR = %q (presente=%v), quería «/cfg/acme»", v, ok)
+		t.Errorf("AZURE_CONFIG_DIR = %q (present=%v), wanted /cfg/acme", v, ok)
 	}
 
 	// azsel must add exactly one variable to the inherited environment:
@@ -105,61 +105,61 @@ func TestLoginScopesTheEnvironment(t *testing.T) {
 
 	// The rest of the environment is inherited: az needs proxy, locale, HOME…
 	if _, ok := envValue(got.cmd, "PATH"); !ok {
-		t.Error("no se heredó el entorno del proceso")
+		t.Error("the process environment was not inherited")
 	}
 }
 
-// Dos comportamientos deliberados y fáciles de romper sin querer: el login es
-// interactivo, así que stdin debe llegar a az; y la salida de az va a stderr
-// porque azsel mantiene stdout limpio para el shell.
+// Two deliberate behaviors, easy to break by accident: login is interactive,
+// so stdin must reach az; and az's output goes to stderr because azsel keeps
+// stdout clean for the shell.
 func TestLoginWiresStreams(t *testing.T) {
 	got := stubRun(t, nil)
 	if err := Login("TID", "/cfg", false); err != nil {
 		t.Fatalf("Login: %v", err)
 	}
 	if got.cmd.Stdin != os.Stdin {
-		t.Error("stdin no está conectado: el login interactivo no funcionaría")
+		t.Error("stdin is not connected: interactive login would not work")
 	}
 	if got.cmd.Stdout != os.Stderr {
-		t.Error("stdout de az no va a stderr: ensuciaría la salida estándar")
+		t.Error("az's stdout does not go to stderr: it would pollute standard output")
 	}
 	if got.cmd.Stderr != os.Stderr {
-		t.Error("stderr de az no va a stderr")
+		t.Error("az's stderr does not go to stderr")
 	}
 }
 
 func TestLoginPropagatesFailure(t *testing.T) {
-	want := errors.New("el usuario canceló")
+	want := errors.New("the user cancelled")
 	stubRun(t, func(*exec.Cmd) error { return want })
 
 	err := Login("TID", "/cfg", false)
 	if !errors.Is(err, want) {
-		t.Errorf("error = %v, quería %v", err, want)
+		t.Errorf("error = %v, wanted %v", err, want)
 	}
 }
 
 func TestAvailable(t *testing.T) {
-	t.Run("az presente", func(t *testing.T) {
+	t.Run("az present", func(t *testing.T) {
 		stubLookPath(t, func(string) (string, error) { return "/usr/local/bin/az", nil })
 		if err := Available(); err != nil {
 			t.Errorf("Available: %v", err)
 		}
 	})
 
-	t.Run("az ausente", func(t *testing.T) {
+	t.Run("az absent", func(t *testing.T) {
 		stubLookPath(t, func(name string) (string, error) {
 			return "", fmt.Errorf("exec: %q: executable file not found in $PATH", name)
 		})
 		err := Available()
 		if err == nil {
-			t.Fatal("Available devolvió nil sin az en el PATH")
+			t.Fatal("Available returned nil with az absent from PATH")
 		}
 		if !strings.Contains(err.Error(), "Azure CLI") {
-			t.Errorf("error = %q, quería que nombrara Azure CLI", err)
+			t.Errorf("error = %q, wanted it to name Azure CLI", err)
 		}
 	})
 
-	t.Run("se consulta el binario correcto", func(t *testing.T) {
+	t.Run("the correct binary is queried", func(t *testing.T) {
 		var asked string
 		stubLookPath(t, func(name string) (string, error) {
 			asked = name
@@ -169,7 +169,7 @@ func TestAvailable(t *testing.T) {
 			t.Fatalf("Available: %v", err)
 		}
 		if asked != "az" {
-			t.Errorf("se buscó %q, quería «az»", asked)
+			t.Errorf("looked up %q, wanted az", asked)
 		}
 	})
 }
@@ -187,7 +187,7 @@ func TestCommandEnvOverridesInheritedValues(t *testing.T) {
 	}
 
 	if v, _ := envValue(got.cmd, "AZURE_CONFIG_DIR"); v != "/cfg/acme" {
-		t.Errorf("AZURE_CONFIG_DIR efectivo = %q, quería «/cfg/acme»", v)
+		t.Errorf("effective AZURE_CONFIG_DIR = %q, wanted /cfg/acme", v)
 	}
 }
 
