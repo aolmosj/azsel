@@ -72,13 +72,17 @@ This is read-only; it does not activate anything.`,
 
 			// Table on stdout (like 'list'); stdout stays parseable.
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ROLE\tSCOPE\tTYPE\tUNTIL")
+			fmt.Fprintln(w, "ROLE\tSCOPE\tTYPE\tVIA\tUNTIL")
 			for _, r := range rows {
 				until := "permanent"
 				if r.End != nil {
 					until = r.End.Format(time.RFC3339)
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", r.RoleName, r.ScopeName, r.ScopeType, until)
+				via := r.ViaGroup()
+				if via == "" {
+					via = "direct"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.RoleName, r.ScopeName, r.ScopeType, via, until)
 			}
 			return w.Flush()
 		},

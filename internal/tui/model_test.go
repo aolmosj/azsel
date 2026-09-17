@@ -527,7 +527,7 @@ func fakePIM(rows []pim.Eligible, err error) func(config.Tenant) ([]pim.Eligible
 	return func(config.Tenant) ([]pim.Eligible, error) { return rows, err }
 }
 
-var pimRows = []pim.Eligible{{RoleName: "Reader", ScopeName: "Prod Sub", ScopeType: "subscription"}}
+var pimRows = []pim.Eligible{{RoleName: "Reader", ScopeName: "Prod Sub", ScopeType: "subscription", PrincipalType: "Group", PrincipalName: "PlatformTeam"}}
 
 // "p" opens the PIM screen for the selected tenant in a loading state and emits
 // a command to do the (async) load.
@@ -563,7 +563,7 @@ func TestPimLoadedMsgRendersRows(t *testing.T) {
 	if m.pimLoading {
 		t.Error("still loading after the rows arrived")
 	}
-	for _, want := range []string{"Reader", "Prod Sub", "subscription"} {
+	for _, want := range []string{"Reader", "Prod Sub", "subscription", "via PlatformTeam"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("rows view missing %q:\n%s", want, v)
 		}

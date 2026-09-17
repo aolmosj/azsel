@@ -266,8 +266,12 @@ func (m Model) pimView() string {
 			if r.End != nil {
 				until = r.End.Format("2006-01-02 15:04")
 			}
+			detail := "  (" + r.ScopeType + ") · until " + until
+			if via := r.ViaGroup(); via != "" {
+				detail += " · via " + via
+			}
 			lines = append(lines, activeStyle.Render(r.RoleName)+"  "+r.ScopeName+
-				pimDetailStyle.Render("  ("+r.ScopeType+") · until "+until))
+				pimDetailStyle.Render(detail))
 		}
 	}
 	lines = append(lines, "", confirmKeysStyle.Render("esc")+" back")
