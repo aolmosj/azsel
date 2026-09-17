@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/aolmosj/azsel/internal/azure"
@@ -28,56 +29,142 @@ type Eligible struct {
 // canned JSON without az or a network (mirrors azure.run).
 var restGet = azure.RestGET
 
-// rootMGURL lists the current user's eligible resource-role instances across the
-// whole tenant. The scope is the tenant root management group, whose id is the
-// tenant GUID; asTarget() restricts the result to the caller, so it returns
-// every eligibility the user has regardless of which subscriptions are visible —
-// a subscription where you are only eligible (never activated) would not even
-// appear in `az account list`, but it shows up here.
-const rootMGURL = "https://management.azure.com/providers/Microsoft.Management/managementGroups/%s" +
-	"/providers/Microsoft.Authorization/roleEligibilityScheduleInstances" +
-	"?api-version=2020-10-01&$filter=asTarget()"
+const (
+	// subscriptionsURL lists the subscriptions the caller can see. ARM's live
+	// list is used rather than `az account list`, which reads the local profile
+	// cache and can be a strict subset.
+	subscriptionsURL = "https://management.azure.com/subscriptions?api-version=2020-01-01"
 
-// restResponse mirrors the ARM payload, keeping only the fields azsel shows.
-type restResponse struct {
+	// eligibleURLTmpl queries the eligible role instances for the current user at
+	// one scope. A query at a scope returns eligibilities at that scope and
+	// inherited from its ancestors (management groups, tenant), so querying every
+	// subscription also surfaces management-group-level eligibilities. asTarget()
+	// restricts the result to the caller and the groups they belong to.
+	eligibleURLTmpl = "https://management.azure.com%s/providers/Microsoft.Authorization/roleEligibilityScheduleInstances?api-version=2020-10-01&$filter=asTarget()"
+
+	// rootMGScopeTmpl is the tenant root management group, a safety net for
+	// eligibilities scoped there directly (its id is the tenant GUID).
+	rootMGScopeTmpl = "/providers/Microsoft.Management/managementGroups/%s"
+
+	// scopeQueryConcurrency bounds how many `az rest` processes run at once.
+	scopeQueryConcurrency = 8
+)
+
+// subscriptionsResponse is the ARM subscriptions list, kept to the id.
+type subscriptionsResponse struct {
 	Value []struct {
-		Properties struct {
-			Status             string  `json:"status"`
-			EndDateTime        *string `json:"endDateTime"`
-			ExpandedProperties struct {
-				Scope struct {
-					ID          string `json:"id"`
-					DisplayName string `json:"displayName"`
-					Type        string `json:"type"`
-				} `json:"scope"`
-				RoleDefinition struct {
-					DisplayName string `json:"displayName"`
-				} `json:"roleDefinition"`
-			} `json:"expandedProperties"`
-		} `json:"properties"`
+		SubscriptionID string `json:"subscriptionId"`
 	} `json:"value"`
 }
 
+// eligibleResponse mirrors the ARM PIM payload, keeping only the fields azsel
+// shows. name is the instance GUID, unique per eligibility, used to deduplicate
+// the same management-group eligibility seen through several subscriptions.
+type eligibleResponse struct {
+	Value []eligibleInstance `json:"value"`
+}
+
+type eligibleInstance struct {
+	Name       string `json:"name"`
+	Properties struct {
+		Status             string  `json:"status"`
+		EndDateTime        *string `json:"endDateTime"`
+		ExpandedProperties struct {
+			Scope struct {
+				ID          string `json:"id"`
+				DisplayName string `json:"displayName"`
+				Type        string `json:"type"`
+			} `json:"scope"`
+			RoleDefinition struct {
+				DisplayName string `json:"displayName"`
+			} `json:"roleDefinition"`
+		} `json:"expandedProperties"`
+	} `json:"properties"`
+}
+
 // ListEligible returns the eligible resource roles for the tenant whose az
-// config lives in configDir. tenantID names the root management group scope and
-// is required: a tenant may be stored without one, and without it there is
-// nothing to query, so that is reported before touching az.
+// config lives in configDir. It enumerates the visible subscriptions, adds the
+// tenant root management group (when tenantID is known) as a safety net, and
+// queries eligibility at every scope concurrently, deduplicating by instance id.
+//
+// Known gaps: eligibilities scoped only to a resource group are not returned (a
+// subscription query does not descend into its resource groups), nor are ones on
+// a subscription the caller cannot otherwise see.
 func ListEligible(configDir, tenantID string) ([]Eligible, error) {
-	if strings.TrimSpace(tenantID) == "" {
-		return nil, fmt.Errorf("tenant has no tenant ID configured; cannot query PIM eligibility")
-	}
-	body, err := restGet(configDir, fmt.Sprintf(rootMGURL, tenantID))
+	// The subscriptions call is also the auth gate: if the tenant is not logged
+	// in, it fails here with az's own message.
+	body, err := restGet(configDir, subscriptionsURL)
 	if err != nil {
 		return nil, err
 	}
-	var resp restResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("parsing PIM response: %w", err)
+	var subs subscriptionsResponse
+	if err := json.Unmarshal(body, &subs); err != nil {
+		return nil, fmt.Errorf("parsing subscriptions: %w", err)
 	}
 
-	out := make([]Eligible, 0, len(resp.Value))
-	for _, v := range resp.Value {
-		p := v.Properties
+	scopes := make([]string, 0, len(subs.Value)+1)
+	for _, s := range subs.Value {
+		if s.SubscriptionID != "" {
+			scopes = append(scopes, "/subscriptions/"+s.SubscriptionID)
+		}
+	}
+	if tid := strings.TrimSpace(tenantID); tid != "" {
+		scopes = append(scopes, fmt.Sprintf(rootMGScopeTmpl, tid))
+	}
+	if len(scopes) == 0 {
+		return nil, nil
+	}
+
+	// Query scopes concurrently. A per-scope failure (a 403 on one subscription)
+	// is recorded but not fatal: it must not hide the eligibilities from the
+	// scopes that did answer. Only if every scope fails is the error surfaced.
+	var (
+		mu      sync.Mutex
+		byName  = make(map[string]eligibleInstance)
+		anyOK   bool
+		lastErr error
+	)
+	sem := make(chan struct{}, scopeQueryConcurrency)
+	var wg sync.WaitGroup
+	for _, scope := range scopes {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(scope string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			b, err := restGet(configDir, fmt.Sprintf(eligibleURLTmpl, scope))
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				lastErr = err
+				return
+			}
+			var resp eligibleResponse
+			if err := json.Unmarshal(b, &resp); err != nil {
+				lastErr = err
+				return
+			}
+			anyOK = true
+			for _, it := range resp.Value {
+				if it.Name != "" {
+					byName[it.Name] = it
+				}
+			}
+		}(scope)
+	}
+	wg.Wait()
+
+	if !anyOK {
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, nil
+	}
+
+	out := make([]Eligible, 0, len(byName))
+	for _, it := range byName {
+		p := it.Properties
 		e := Eligible{
 			RoleName:  p.ExpandedProperties.RoleDefinition.DisplayName,
 			ScopeName: p.ExpandedProperties.Scope.DisplayName,

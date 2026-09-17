@@ -12,6 +12,7 @@ import (
 const pimTwoRows = `{
   "value": [
     {
+      "name": "inst-reader",
       "properties": {
         "status": "Provisioned",
         "endDateTime": null,
@@ -22,6 +23,7 @@ const pimTwoRows = `{
       }
     },
     {
+      "name": "inst-contrib",
       "properties": {
         "status": "Provisioned",
         "endDateTime": "2026-01-02T03:04:05Z",
@@ -33,6 +35,24 @@ const pimTwoRows = `{
     }
   ]
 }`
+
+// fakeAzurePIM is a fake `az` that answers the two calls ListEligible makes: the
+// subscriptions list and the per-scope eligibility query.
+const fakeAzurePIM = `case "$*" in
+  *"/subscriptions?api-version"*)
+    cat <<'JSON'
+{"value":[{"subscriptionId":"sub-1"}]}
+JSON
+    ;;
+  *roleEligibilityScheduleInstances*)
+    cat <<'JSON'
+` + pimTwoRows + `
+JSON
+    ;;
+  *)
+    echo '{"value":[]}'
+    ;;
+esac`
 
 // pim list leans on `az rest`, so a missing Azure CLI must fail immediately with
 // the install message — before loading config or resolving a tenant.
@@ -51,7 +71,7 @@ func TestPIMListRequiresAzureCLI(t *testing.T) {
 
 func TestPIMListPrintsRows(t *testing.T) {
 	listSandbox(t, "contoso")
-	fakeAzureCLI(t, "cat <<'JSON'\n"+pimTwoRows+"\nJSON")
+	fakeAzureCLI(t, fakeAzurePIM)
 
 	out := quiet(t)
 	if err := run(t, newPIMCmd(), "list", "contoso"); err != nil {
@@ -83,7 +103,11 @@ func TestPIMListResolvesDefaultWhenNoArg(t *testing.T) {
 
 	sentinel := filepath.Join(t.TempDir(), "scoped-config-dir")
 	t.Setenv("AZSEL_TEST_SENTINEL", sentinel)
-	fakeAzureCLI(t, `printf '%s' "$AZURE_CONFIG_DIR" > "$AZSEL_TEST_SENTINEL"`+"\ncat <<'JSON'\n"+`{"value":[]}`+"\nJSON")
+	// Record the config dir on the (single, non-concurrent) subscriptions call.
+	fakeAzureCLI(t, `case "$*" in
+  *"/subscriptions?api-version"*) printf '%s' "$AZURE_CONFIG_DIR" > "$AZSEL_TEST_SENTINEL" ;;
+esac
+echo '{"value":[]}'`)
 
 	quiet(t)
 	if err := run(t, newPIMCmd(), "list"); err != nil {
