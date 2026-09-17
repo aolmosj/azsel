@@ -228,6 +228,76 @@ func TestLoginServicePrincipalScopesConfigDir(t *testing.T) {
 	}
 }
 
+func TestRestGETArguments(t *testing.T) {
+	got := stubRun(t, nil)
+	url := "https://management.azure.com/x?api-version=2020-10-01&$filter=asTarget()"
+	if _, err := RestGET("/cfg", url); err != nil {
+		t.Fatalf("RestGET: %v", err)
+	}
+	want := []string{"az", "rest", "--method", "GET", "--url", url, "--only-show-errors"}
+	if !slices.Equal(got.cmd.Args, want) {
+		t.Errorf("args = %v, wanted %v", got.cmd.Args, want)
+	}
+}
+
+func TestRestGETScopesConfigDir(t *testing.T) {
+	got := stubRun(t, nil)
+	if _, err := RestGET("/cfg/acme", "https://example"); err != nil {
+		t.Fatalf("RestGET: %v", err)
+	}
+	if v, ok := envValue(got.cmd, "AZURE_CONFIG_DIR"); !ok || v != "/cfg/acme" {
+		t.Errorf("AZURE_CONFIG_DIR = %q (present=%v), wanted /cfg/acme", v, ok)
+	}
+}
+
+// The body az writes to stdout is what RestGET must return — not a stream to
+// os.Stderr like the login helpers. Breaking the capture wiring fails this.
+func TestRestGETCapturesStdout(t *testing.T) {
+	body := `{"value":[]}`
+	stubRun(t, func(cmd *exec.Cmd) error {
+		_, _ = cmd.Stdout.Write([]byte(body))
+		return nil
+	})
+	got, err := RestGET("/cfg", "https://example")
+	if err != nil {
+		t.Fatalf("RestGET: %v", err)
+	}
+	if string(got) != body {
+		t.Errorf("body = %q, wanted %q", got, body)
+	}
+}
+
+// az's stderr carries the actionable message ("run 'az login'", AADSTS…), so it
+// must survive into the returned error, which must still wrap the run failure.
+func TestRestGETSurfacesStderr(t *testing.T) {
+	sentinel := errors.New("exit status 1")
+	stubRun(t, func(cmd *exec.Cmd) error {
+		_, _ = cmd.Stderr.Write([]byte("ERROR: Please run 'az login' to setup account."))
+		return sentinel
+	})
+	_, err := RestGET("/cfg", "https://example")
+	if err == nil {
+		t.Fatal("RestGET returned nil on failure")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("error = %v, wanted it to wrap the run failure", err)
+	}
+	if !strings.Contains(err.Error(), "az login") {
+		t.Errorf("error = %q, wanted az's stderr surfaced", err)
+	}
+}
+
+// Non-interactive: a REST call must not connect stdin.
+func TestRestGETNoStdin(t *testing.T) {
+	got := stubRun(t, nil)
+	if _, err := RestGET("/cfg", "https://example"); err != nil {
+		t.Fatalf("RestGET: %v", err)
+	}
+	if got.cmd.Stdin != nil {
+		t.Error("stdin connected for a non-interactive REST call; should be nil")
+	}
+}
+
 // A secret starting with '-' must be one token joined with '=', or az's
 // argparse would read it as a flag and the login would fail.
 func TestLoginServicePrincipalSecretStartingWithDash(t *testing.T) {

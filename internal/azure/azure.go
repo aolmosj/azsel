@@ -1,9 +1,11 @@
 package azure
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // binary is the Azure CLI executable azsel drives.
@@ -94,4 +96,28 @@ func LoginServicePrincipal(tenantID, configDir, appID, certificate, secret strin
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	return run(cmd)
+}
+
+// RestGET runs `az rest --method GET --url <url>` scoped to configDir and
+// returns the response body. Unlike the login helpers, which stream az's output
+// to stderr, this captures stdout — az writes the raw JSON body there — so
+// callers can parse it. az's own diagnostics on stderr are folded into the
+// returned error, because "run 'az login'" and AADSTS messages are exactly what
+// a caller needs to surface.
+//
+// --only-show-errors keeps az's warnings (upgrade notices, preview banners) out
+// of the captured stderr. url is a single argv token: exec runs no shell, so a
+// query string like ?api-version=…&$filter=asTarget() reaches az verbatim.
+func RestGET(configDir, url string) ([]byte, error) {
+	cmd := command(configDir, "rest", "--method", "GET", "--url", url, "--only-show-errors")
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := run(cmd); err != nil {
+		if msg := strings.TrimSpace(errb.String()); msg != "" {
+			return nil, fmt.Errorf("az rest failed: %w\n%s", err, msg)
+		}
+		return nil, fmt.Errorf("az rest failed: %w", err)
+	}
+	return out.Bytes(), nil
 }
