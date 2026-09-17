@@ -33,6 +33,7 @@ func subsBody(ids ...string) []byte {
 
 type inst struct {
 	name, role, scopeName, scopeType, end string
+	pType, pName                          string
 }
 
 func instBody(items ...inst) []byte {
@@ -46,10 +47,14 @@ func instBody(items ...inst) []byte {
 		if it.end != "" {
 			end = fmt.Sprintf("%q", it.end)
 		}
+		pType, pName := it.pType, it.pName
+		if pType == "" {
+			pType, pName = "User", "Me"
+		}
 		fmt.Fprintf(&b, `{"name":%q,"properties":{"status":"Provisioned","endDateTime":%s,`+
 			`"expandedProperties":{"scope":{"id":"/scope/%s","displayName":%q,"type":%q},`+
-			`"roleDefinition":{"displayName":%q}}}}`,
-			it.name, end, it.name, it.scopeName, it.scopeType, it.role)
+			`"roleDefinition":{"displayName":%q},"principal":{"displayName":%q,"type":%q}}}}`,
+			it.name, end, it.name, it.scopeName, it.scopeType, it.role, pName, pType)
 	}
 	b.WriteString(`]}`)
 	return []byte(b.String())
@@ -63,7 +68,7 @@ func forSub(url, id string) bool { return strings.Contains(url, "/subscriptions/
 // below it, so it must be deduplicated by instance id; subscription- and
 // MG-scoped rows both appear, sorted deterministically.
 func TestListEligibleAggregatesAndDedupes(t *testing.T) {
-	mg := inst{name: "mg1", role: "Owner", scopeName: "AOC root", scopeType: "managementgroup"}
+	mg := inst{name: "mg1", role: "Owner", scopeName: "AOC root", scopeType: "managementgroup", pType: "Group", pName: "Delivery"}
 	stubRestGet(t, func(url string) ([]byte, error) {
 		switch {
 		case isSubsList(url):
@@ -103,6 +108,14 @@ func TestListEligibleAggregatesAndDedupes(t *testing.T) {
 	}
 	if got[0].End != nil {
 		t.Errorf("MG Owner end = %v, wanted nil (permanent)", got[0].End)
+	}
+	// The group-inherited row reports the group it comes through; a direct one
+	// does not.
+	if got[0].ViaGroup() != "Delivery" {
+		t.Errorf("MG Owner ViaGroup() = %q, wanted Delivery", got[0].ViaGroup())
+	}
+	if got[2].ViaGroup() != "" {
+		t.Errorf("direct row ViaGroup() = %q, wanted empty", got[2].ViaGroup())
 	}
 }
 

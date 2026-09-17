@@ -23,6 +23,22 @@ type Eligible struct {
 	ScopeID   string
 	Status    string
 	End       *time.Time // nil = permanent eligibility (no end date)
+
+	// The principal the eligibility is assigned to. When PrincipalType is
+	// "Group" the eligibility is inherited through membership of that group
+	// (PrincipalName), which is what the user activates through; otherwise it is
+	// assigned to the user directly.
+	PrincipalType string
+	PrincipalName string
+}
+
+// ViaGroup reports the group the eligibility comes through, or "" when it is
+// assigned to the user directly.
+func (e Eligible) ViaGroup() string {
+	if strings.EqualFold(e.PrincipalType, "Group") {
+		return e.PrincipalName
+	}
+	return ""
 }
 
 // restGet is the seam onto the Azure CLI, a package variable so tests can feed
@@ -78,6 +94,10 @@ type eligibleInstance struct {
 			RoleDefinition struct {
 				DisplayName string `json:"displayName"`
 			} `json:"roleDefinition"`
+			Principal struct {
+				DisplayName string `json:"displayName"`
+				Type        string `json:"type"`
+			} `json:"principal"`
 		} `json:"expandedProperties"`
 	} `json:"properties"`
 }
@@ -166,11 +186,13 @@ func ListEligible(configDir, tenantID string) ([]Eligible, error) {
 	for _, it := range byName {
 		p := it.Properties
 		e := Eligible{
-			RoleName:  p.ExpandedProperties.RoleDefinition.DisplayName,
-			ScopeName: p.ExpandedProperties.Scope.DisplayName,
-			ScopeType: p.ExpandedProperties.Scope.Type,
-			ScopeID:   p.ExpandedProperties.Scope.ID,
-			Status:    p.Status,
+			RoleName:      p.ExpandedProperties.RoleDefinition.DisplayName,
+			ScopeName:     p.ExpandedProperties.Scope.DisplayName,
+			ScopeType:     p.ExpandedProperties.Scope.Type,
+			ScopeID:       p.ExpandedProperties.Scope.ID,
+			Status:        p.Status,
+			PrincipalType: p.ExpandedProperties.Principal.Type,
+			PrincipalName: p.ExpandedProperties.Principal.DisplayName,
 		}
 		// A missing or unparseable end date leaves End nil (treated as
 		// permanent) rather than failing the whole listing.
@@ -191,7 +213,10 @@ func ListEligible(configDir, tenantID string) ([]Eligible, error) {
 		if c := strings.Compare(a.RoleName, b.RoleName); c != 0 {
 			return c
 		}
-		return strings.Compare(a.ScopeName, b.ScopeName)
+		if c := strings.Compare(a.ScopeName, b.ScopeName); c != 0 {
+			return c
+		}
+		return strings.Compare(a.PrincipalName, b.PrincipalName)
 	})
 	return out, nil
 }

@@ -18,7 +18,8 @@ const pimTwoRows = `{
         "endDateTime": null,
         "expandedProperties": {
           "scope": {"id": "/subscriptions/aaa", "displayName": "Prod Sub", "type": "subscription"},
-          "roleDefinition": {"displayName": "Reader"}
+          "roleDefinition": {"displayName": "Reader"},
+          "principal": {"displayName": "PlatformTeam", "type": "Group"}
         }
       }
     },
@@ -29,7 +30,8 @@ const pimTwoRows = `{
         "endDateTime": "2026-01-02T03:04:05Z",
         "expandedProperties": {
           "scope": {"id": "/subscriptions/aaa/resourceGroups/rg1", "displayName": "rg1", "type": "resourcegroup"},
-          "roleDefinition": {"displayName": "Contributor"}
+          "roleDefinition": {"displayName": "Contributor"},
+          "principal": {"displayName": "Antonio", "type": "User"}
         }
       }
     }
@@ -89,6 +91,13 @@ func TestPIMListPrintsRows(t *testing.T) {
 	}
 	if !strings.Contains(got, "2026-01-02T03:04:05Z") {
 		t.Errorf("a bounded eligibility should show its end date:\n%s", got)
+	}
+	// A group-inherited row names the group; a direct one reads "direct".
+	if !strings.Contains(got, "PlatformTeam") {
+		t.Errorf("a group eligibility should name the group:\n%s", got)
+	}
+	if !strings.Contains(got, "direct") {
+		t.Errorf("a direct eligibility should read 'direct':\n%s", got)
 	}
 }
 
