@@ -5,7 +5,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/aolmosj/azsel/internal/azure"
 	"github.com/aolmosj/azsel/internal/config"
+	"github.com/aolmosj/azsel/internal/pim"
 	"github.com/aolmosj/azsel/internal/tui"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
@@ -40,7 +42,16 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		}
 		return "", nil
 	}
-	model := tui.NewModel(cfg.Tenants, currentDir, defaultName, setDefault)
+	// Loading eligible PIM roles needs the Azure CLI; checking inside the
+	// closure means pressing "p" without az shows a friendly error in the PIM
+	// view rather than a silent no-op, and keeps azure/pim out of the model.
+	listPIM := func(t config.Tenant) ([]pim.Eligible, error) {
+		if err := azure.Available(); err != nil {
+			return nil, err
+		}
+		return pim.ListEligible(t.ConfigDir, t.TenantID)
+	}
+	model := tui.NewModel(cfg.Tenants, currentDir, defaultName, setDefault, listPIM)
 
 	p := tea.NewProgram(model, tea.WithOutput(os.Stderr))
 	finalModel, err := p.Run()
