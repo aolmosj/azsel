@@ -73,10 +73,5 @@ var (
 	statusMsgStyle = lipgloss.NewStyle().
 			Foreground(azureLight)
 
-	// PIM role rows: the scope and expiry detail is dimmed so the role name
-	// leads the line.
-	pimDetailStyle = lipgloss.NewStyle().
-			Foreground(subtle)
-
 	appStyle = lipgloss.NewStyle().Margin(1, 2)
 )

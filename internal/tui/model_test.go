@@ -646,6 +646,44 @@ func TestPimLoadedIgnoredAfterEsc(t *testing.T) {
 	}
 }
 
+// The PIM screen is a filterable list: "/" drives the PIM list (not the tenant
+// list), and esc cancels the filter before it leaves the screen. The actual
+// match narrowing is bubbles' own (async) behavior; here we prove the keys and
+// the esc handling are wired to the PIM list.
+func TestPimScreenFilters(t *testing.T) {
+	rows := []pim.Eligible{
+		{RoleName: "Reader", ScopeName: "Prod Sub", ScopeType: "subscription"},
+		{RoleName: "Owner", ScopeName: "Dev Sub", ScopeType: "subscription"},
+	}
+	m := NewModel(tenants(), "", "", nil, fakePIM(rows, nil))
+	m, _ = send(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m, _ = send(t, m, keyMsg("p"))
+	m, _ = send(t, m, pimLoadedMsg{rows: rows})
+
+	// "/" starts filtering the PIM list, and the tenant list stays put.
+	m, _ = send(t, m, keyMsg("/"))
+	if m.pimList.FilterState() != list.Filtering {
+		t.Fatalf("\"/\" did not start filtering the PIM list: %v", m.pimList.FilterState())
+	}
+	if m.screen != screenPIM {
+		t.Fatalf("filtering left the PIM screen: %v", m.screen)
+	}
+	if m.list.FilterState() == list.Filtering {
+		t.Error("\"/\" filtered the tenant list instead of the PIM list")
+	}
+
+	// esc while filtering cancels the filter but stays on the PIM screen; a
+	// second esc (not filtering) returns to the tenant list.
+	m, _ = send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.screen != screenPIM {
+		t.Error("esc while filtering left the PIM screen instead of cancelling the filter")
+	}
+	m, _ = send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.screen != screenList {
+		t.Errorf("esc did not return to the tenant list: %v", m.screen)
+	}
+}
+
 // loadPIMCmd runs the loader and maps the outcome to a message.
 func TestLoadPIMCmdMapsResults(t *testing.T) {
 	ts := tenants()

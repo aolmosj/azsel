@@ -1,6 +1,9 @@
 package tui
 
-import "github.com/aolmosj/azsel/internal/config"
+import (
+	"github.com/aolmosj/azsel/internal/config"
+	"github.com/aolmosj/azsel/internal/pim"
+)
 
 type TenantItem struct {
 	tenant    config.Tenant
@@ -36,4 +39,34 @@ func (t TenantItem) marker() string {
 // Both name and ID are searchable: pasting a GUID should find its tenant.
 func (t TenantItem) FilterValue() string {
 	return t.tenant.Name + " " + t.tenant.TenantID
+}
+
+// pimItem adapts an eligible role to the bubbles list. Unlike TenantItem it
+// implements list.DefaultItem (Title/Description) and rides the default
+// delegate, which gives filter highlighting for free.
+type pimItem struct{ e pim.Eligible }
+
+func (p pimItem) Title() string {
+	scope := p.e.ScopeName
+	if scope == "" {
+		scope = "(unknown scope)"
+	}
+	return p.e.RoleName + "  —  " + scope
+}
+
+func (p pimItem) Description() string {
+	until := "permanent"
+	if p.e.End != nil {
+		until = p.e.End.Format("2006-01-02 15:04")
+	}
+	d := "(" + p.e.ScopeType + ") · until " + until
+	if via := p.e.ViaGroup(); via != "" {
+		d += " · via " + via
+	}
+	return d
+}
+
+// Role, scope, type and the granting group are all searchable.
+func (p pimItem) FilterValue() string {
+	return p.e.RoleName + " " + p.e.ScopeName + " " + p.e.ScopeType + " " + p.e.PrincipalName
 }
