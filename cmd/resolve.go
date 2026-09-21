@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/aolmosj/azsel/internal/azure"
 	"github.com/aolmosj/azsel/internal/config"
@@ -35,4 +36,17 @@ func requireSession(t *config.Tenant) error {
 		return fmt.Errorf("the session for tenant %q has expired; run 'azsel login %s'", t.Name, t.Name)
 	}
 	return nil
+}
+
+// warnIfExpired notes, without failing, that a tenant a command just switched to
+// or made default has a lapsed session — the point of doing so is to use it, and
+// az would fail until re-login. Best-effort: skipped when the Azure CLI is not
+// installed, so 'use' and 'default' keep working without az.
+func warnIfExpired(t *config.Tenant) {
+	if azure.Available() != nil {
+		return
+	}
+	if valid, _ := azure.SessionState(t.ConfigDir); !valid {
+		fmt.Fprintf(os.Stderr, "Note: tenant %q's session has expired; run 'azsel login %s'.\n", t.Name, t.Name)
+	}
 }
