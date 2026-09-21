@@ -209,10 +209,10 @@ func TestStrategy1Dedupes(t *testing.T) {
 	}
 }
 
-// Throttling on Strategy 1's ARM query is surfaced as a clear message, and does
-// NOT fall back (which would fan out more calls into the same throttle).
-func TestThrottleOnStrategy1IsSurfaced(t *testing.T) {
-	fannedOut := false
+// If Strategy 1's query fails (here: throttled or unsupported at the root MG)
+// but the per-subscription path works, the fallback recovers the results
+// instead of leaving the user stuck.
+func TestStrategy1FailureFallsBackToStrategy2(t *testing.T) {
 	stubRestGet(t, func(url string) ([]byte, error) {
 		switch {
 		case isMe(url):
@@ -222,20 +222,51 @@ func TestThrottleOnStrategy1IsSurfaced(t *testing.T) {
 		case isScopeAndBelow(url):
 			return nil, errors.New(`Bad Request({"error":{"code":"AadPremiumLicenseRequired"}})`)
 		case isSubsList(url):
-			fannedOut = true
 			return subsBody("sub-1"), nil
+		case forSub(url, "sub-1"):
+			return instBody(inst{name: "s1", role: "Reader", scopeName: "App1", scopeType: "subscription"}), nil
 		}
 		return []byte(`{"value":[]}`), nil
 	})
+	got, err := ListEligible("/cfg", "TID")
+	if err != nil {
+		t.Fatalf("ListEligible: %v", err)
+	}
+	if len(got) != 1 || got[0].RoleName != "Reader" {
+		t.Errorf("got %+v, wanted the Strategy 2 Reader row after fallback", got)
+	}
+}
+
+// When Strategy 2 is reached and the very first (probe) scope is throttled, it
+// fails fast with a clear message rather than firing a call per subscription.
+func TestStrategy2ProbeFailsFast(t *testing.T) {
+	var (
+		mu   sync.Mutex
+		urls []string
+	)
+	stubRestGet(t, func(url string) ([]byte, error) {
+		mu.Lock()
+		urls = append(urls, url)
+		mu.Unlock()
+		switch {
+		case isMe(url):
+			return nil, errors.New("no graph") // force fallback
+		case isSubsList(url):
+			return subsBody("sub-1", "sub-2", "sub-3"), nil
+		}
+		// Every eligibility query throttles.
+		return nil, errors.New(`Bad Request({"error":{"code":"AadPremiumLicenseRequired"}})`)
+	})
 	_, err := ListEligible("/cfg", "TID")
-	if err == nil {
-		t.Fatal("ListEligible returned nil on a throttled tenant")
+	if err == nil || !strings.Contains(err.Error(), "rate-limited") {
+		t.Fatalf("error = %v, wanted a clear rate-limit message", err)
 	}
-	if !strings.Contains(err.Error(), "rate-limited") {
-		t.Errorf("error = %q, wanted a clear rate-limit message", err)
-	}
-	if fannedOut {
-		t.Error("throttling on Strategy 1 fell back to the per-subscription fan-out")
+	mu.Lock()
+	defer mu.Unlock()
+	for _, u := range urls {
+		if forSub(u, "sub-2") || forSub(u, "sub-3") {
+			t.Errorf("fanned out to %q despite the probe being throttled", u)
+		}
 	}
 }
 
