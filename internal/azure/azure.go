@@ -98,6 +98,23 @@ func LoginServicePrincipal(tenantID, configDir, appID, certificate, secret strin
 	return run(cmd)
 }
 
+// SessionState reports whether the tenant logged into configDir still has a
+// usable session. It asks az to acquire a token (which exercises the refresh
+// token) and reads its expiry; a lapsed session — az's AADSTS700082, or never
+// having logged in — makes az exit non-zero, reported here as valid=false.
+// Callers gate on Available first; any az failure is treated as "not signed
+// in" rather than surfaced, since that is what the caller shows.
+func SessionState(configDir string) (valid bool, expiresOn string) {
+	cmd := command(configDir, "account", "get-access-token", "--query", "expiresOn", "--output", "tsv")
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &bytes.Buffer{}
+	if err := run(cmd); err != nil {
+		return false, ""
+	}
+	return true, strings.TrimSpace(out.String())
+}
+
 // RestGET runs `az rest --method GET --url <url>` scoped to configDir and
 // returns the response body. Unlike the login helpers, which stream az's output
 // to stderr, this captures stdout — az writes the raw JSON body there — so

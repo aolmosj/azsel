@@ -78,6 +78,50 @@ func TestListWarnsOnBrokenDefault(t *testing.T) {
 	}
 }
 
+// list --check adds a STATUS column and flags expired sessions. The fake az
+// treats one tenant as signed in (token acquired) and the other as expired.
+func TestListCheckShowsSessionStatus(t *testing.T) {
+	listSandbox(t, "contoso", "fabrikam")
+	fakeAzureCLI(t, `case "$AZURE_CONFIG_DIR" in
+  *contoso*) echo "2026-12-31T23:59:59"; exit 0 ;;
+  *) exit 1 ;;
+esac`)
+
+	out := quiet(t)
+	if err := run(t, newListCmd(), "--check"); err != nil {
+		t.Fatalf("list --check: %v", err)
+	}
+	got := out()
+	if !strings.Contains(got, "STATUS") {
+		t.Errorf("the STATUS column is missing:\n%s", got)
+	}
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "contoso") && !strings.Contains(line, "ok") {
+			t.Errorf("contoso should be ok: %q", line)
+		}
+		if strings.Contains(line, "fabrikam") && !strings.Contains(line, "expired") {
+			t.Errorf("fabrikam should be expired: %q", line)
+		}
+	}
+	if !strings.Contains(got, "azsel login") {
+		t.Errorf("expected a hint to run 'azsel login' when a session expired:\n%s", got)
+	}
+}
+
+func TestListCheckRequiresAzureCLI(t *testing.T) {
+	withoutAzureCLI(t)
+	// A tenant so it gets past the empty-config check.
+	home := filepath.Join(t.TempDir(), ".azsel")
+	t.Setenv(config.EnvHome, home)
+	if err := config.Save(&config.Config{Tenants: []config.Tenant{{Name: "acme", ConfigDir: home}}}); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	quiet(t)
+	if err := run(t, newListCmd(), "--check"); err == nil || !strings.Contains(err.Error(), "Azure CLI") {
+		t.Errorf("error = %v, wanted it to require the Azure CLI", err)
+	}
+}
+
 func TestListNoDefault(t *testing.T) {
 	listSandbox(t, "contoso")
 	out := quiet(t)
