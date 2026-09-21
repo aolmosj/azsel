@@ -91,28 +91,24 @@ func ListEligible(configDir, tenantID string) ([]Eligible, error) {
 	if err == nil {
 		return rows, nil
 	}
-	if !errors.Is(err, errFallback) {
-		// A definitive failure (throttling above all) — do not fall back, which
-		// would only fan out more calls into the same throttle.
-		return nil, err
-	}
+	// Strategy 1 did not work — it may be unavailable (no tenant id or Graph
+	// identity), unauthorized at the root MG, or throttled. Fall back to the
+	// per-subscription path, which is known to return results when the tenant is
+	// not throttled and fails fast with a clear message when it is.
 	return listViaSubscriptions(configDir, tenantID)
 }
 
-// listViaRootMG is Strategy 1.
+// listViaRootMG is Strategy 1. Any failure returns errFallback so the caller
+// tries Strategy 2 rather than giving up.
 func listViaRootMG(configDir, tenantID string) ([]Eligible, error) {
 	if strings.TrimSpace(tenantID) == "" {
 		return nil, errFallback
 	}
 
-	// Identify the caller. Graph lives on a different endpoint than ARM PIM, so
-	// these usually succeed even when PIM is throttling; a genuine failure here
-	// (e.g. a service-principal profile with no /me) just means fall back.
+	// Identify the caller for the client-side filter: their object id and the
+	// groups they belong to (an eligibility can be assigned to such a group).
 	meBody, err := restGet(configDir, meURL)
 	if err != nil {
-		if isThrottle(err) {
-			return nil, throttleError(err)
-		}
 		return nil, errFallback
 	}
 	var me struct {
@@ -124,9 +120,6 @@ func listViaRootMG(configDir, tenantID string) ([]Eligible, error) {
 
 	groups, err := fetchIDs(configDir, myGroupsURL)
 	if err != nil {
-		if isThrottle(err) {
-			return nil, throttleError(err)
-		}
 		return nil, errFallback
 	}
 	principals := map[string]bool{me.ID: true}
@@ -136,11 +129,6 @@ func listViaRootMG(configDir, tenantID string) ([]Eligible, error) {
 
 	instances, err := fetchInstances(configDir, eligibleURL(rootMGScope(tenantID), "atScopeAndBelow()"))
 	if err != nil {
-		if isThrottle(err) {
-			return nil, throttleError(err)
-		}
-		// Not authorized to read at the root MG, or any other ARM error: fall
-		// back to the per-subscription path.
 		return nil, errFallback
 	}
 
@@ -188,42 +176,47 @@ func listViaSubscriptions(configDir, tenantID string) ([]Eligible, error) {
 		return nil, nil
 	}
 
-	var (
-		mu      sync.Mutex
-		byName  = make(map[string]eligibleInstance)
-		anyOK   bool
-		lastErr error
-	)
-	sem := make(chan struct{}, scopeQueryConcurrency)
-	var wg sync.WaitGroup
-	for _, scope := range scopes {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(scope string) {
-			defer wg.Done()
-			defer func() { <-sem }()
+	byName := make(map[string]eligibleInstance)
 
-			b, err := restGet(configDir, eligibleURL(scope, "asTarget()"))
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				lastErr = err
-				return
-			}
-			var resp eligibleResponse
-			if err := json.Unmarshal(b, &resp); err != nil {
-				lastErr = err
-				return
-			}
-			anyOK = true
-			for _, it := range resp.Value {
-				if it.Name != "" {
-					byName[it.Name] = it
-				}
-			}
-		}(scope)
+	// Probe the first scope synchronously. If PIM is throttling, this fails fast
+	// with a clear message instead of fanning out a call per subscription into
+	// the throttle.
+	probeErr := queryScopeInto(configDir, scopes[0], byName)
+	if isThrottle(probeErr) {
+		return nil, throttleError(probeErr)
 	}
-	wg.Wait()
+	anyOK := probeErr == nil
+	lastErr := probeErr
+
+	// Fan out the remaining scopes concurrently. A per-scope failure (a 403 on
+	// one subscription) is recorded but not fatal.
+	if len(scopes) > 1 {
+		var mu sync.Mutex
+		sem := make(chan struct{}, scopeQueryConcurrency)
+		var wg sync.WaitGroup
+		for _, scope := range scopes[1:] {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(scope string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+
+				got := make(map[string]eligibleInstance)
+				err := queryScopeInto(configDir, scope, got)
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					lastErr = err
+					return
+				}
+				anyOK = true
+				for k, v := range got {
+					byName[k] = v
+				}
+			}(scope)
+		}
+		wg.Wait()
+	}
 
 	if !anyOK {
 		if isThrottle(lastErr) {
@@ -235,6 +228,25 @@ func listViaSubscriptions(configDir, tenantID string) ([]Eligible, error) {
 		return nil, nil
 	}
 	return sortEligibles(byName), nil
+}
+
+// queryScopeInto runs the asTarget() eligibility query for one scope and merges
+// the instances into dst, keyed by instance id.
+func queryScopeInto(configDir, scope string, dst map[string]eligibleInstance) error {
+	b, err := restGet(configDir, eligibleURL(scope, "asTarget()"))
+	if err != nil {
+		return err
+	}
+	var resp eligibleResponse
+	if err := json.Unmarshal(b, &resp); err != nil {
+		return err
+	}
+	for _, it := range resp.Value {
+		if it.Name != "" {
+			dst[it.Name] = it
+		}
+	}
+	return nil
 }
 
 // eligibleResponse mirrors the ARM PIM payload; name is the instance GUID,
