@@ -228,6 +228,39 @@ func TestLoginServicePrincipalScopesConfigDir(t *testing.T) {
 	}
 }
 
+func TestSessionStateValid(t *testing.T) {
+	stubRun(t, func(cmd *exec.Cmd) error {
+		_, _ = cmd.Stdout.Write([]byte("2026-09-21T18:00:00.000000\n"))
+		return nil
+	})
+	valid, exp := SessionState("/cfg")
+	if !valid {
+		t.Fatal("SessionState reported an invalid session for a token that was acquired")
+	}
+	if exp != "2026-09-21T18:00:00.000000" {
+		t.Errorf("expiresOn = %q, wanted the trimmed token expiry", exp)
+	}
+}
+
+func TestSessionStateExpired(t *testing.T) {
+	stubRun(t, func(*exec.Cmd) error { return errors.New("AADSTS700082: refresh token expired") })
+	if valid, _ := SessionState("/cfg"); valid {
+		t.Error("SessionState reported a valid session when az could not get a token")
+	}
+}
+
+func TestSessionStateArguments(t *testing.T) {
+	got := stubRun(t, nil)
+	SessionState("/cfg/acme")
+	want := []string{"az", "account", "get-access-token", "--query", "expiresOn", "--output", "tsv"}
+	if !slices.Equal(got.cmd.Args, want) {
+		t.Errorf("args = %v, wanted %v", got.cmd.Args, want)
+	}
+	if v, ok := envValue(got.cmd, "AZURE_CONFIG_DIR"); !ok || v != "/cfg/acme" {
+		t.Errorf("AZURE_CONFIG_DIR = %q (present=%v), wanted /cfg/acme", v, ok)
+	}
+}
+
 func TestRestGETArguments(t *testing.T) {
 	got := stubRun(t, nil)
 	url := "https://management.azure.com/x?api-version=2020-10-01&$filter=asTarget()"
