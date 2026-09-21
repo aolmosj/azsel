@@ -166,3 +166,24 @@ func TestDefaultShowBrokenLink(t *testing.T) {
 		t.Errorf("the broken link was not reported: %q", got)
 	}
 }
+
+// Setting a default still succeeds, but notes when the tenant's session has
+// expired — new shells would start on a dead session.
+func TestDefaultSetWarnsOnExpiredSession(t *testing.T) {
+	defaultSandbox(t, "contoso")
+	fakeAzureCLI(t, `case "$*" in
+  *get-access-token*) exit 1 ;;
+  *) echo '{"value":[]}' ;;
+esac`)
+	out := quiet(t)
+	if err := run(t, newDefaultCmd(), "contoso"); err != nil {
+		t.Fatalf("default: %v", err)
+	}
+	got := out()
+	if !strings.Contains(got, "Default tenant") {
+		t.Errorf("default should still be set: %q", got)
+	}
+	if !strings.Contains(got, "expired") || !strings.Contains(got, "azsel login") {
+		t.Errorf("default should warn about the expired session: %q", got)
+	}
+}
