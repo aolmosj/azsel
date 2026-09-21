@@ -39,6 +39,15 @@ type Model struct {
 	// disables the "p" key.
 	listPIM func(t config.Tenant) ([]pim.Eligible, error)
 
+	// checkSession reports whether a tenant's login is still usable. Set through
+	// SetSessionCheck (rather than the constructor, to spare its many callers a
+	// parameter); nil skips the on-open session check and its markers.
+	checkSession func(t config.Tenant) bool
+
+	// loginWanted records that the user asked to (re)login the selected tenant;
+	// cmd/tui.go runs the interactive az login after the program exits.
+	loginWanted *config.Tenant
+
 	// screen selects the view. confirmName carries the "d" prompt's subject;
 	// setting a default rewrites ~/.azure, more consequential than anything else
 	// the TUI does, so it asks first.
@@ -110,8 +119,43 @@ func (m *Model) applyDefault(name string) {
 	m.list.SetItems(items)
 }
 
+// SetSessionCheck installs the session probe and enables the on-open check.
+func (m *Model) SetSessionCheck(f func(config.Tenant) bool) {
+	m.checkSession = f
+}
+
 func (m Model) Init() tea.Cmd {
-	return nil
+	if m.checkSession == nil {
+		return nil
+	}
+	var tenants []config.Tenant
+	for _, it := range m.list.Items() {
+		if ti, ok := it.(TenantItem); ok {
+			tenants = append(tenants, ti.tenant)
+		}
+	}
+	return checkSessionsCmd(m.checkSession, tenants)
+}
+
+// applySessions stamps each item with its login state, leaving one place that
+// decides the marker (as applyDefault does).
+func (m *Model) applySessions(valid map[string]bool) {
+	items := m.list.Items()
+	for i, it := range items {
+		ti, ok := it.(TenantItem)
+		if !ok {
+			continue
+		}
+		if v, known := valid[ti.tenant.Name]; known {
+			if v {
+				ti.session = sessionOK
+			} else {
+				ti.session = sessionExpired
+			}
+		}
+		items[i] = ti
+	}
+	m.list.SetItems(items)
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -176,6 +220,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			switch msg.String() {
+			case "l":
+				// Record the intent and quit; cmd/tui.go runs the interactive az login after
+				// the program exits, as it does for activation.
+				if item, ok := m.list.SelectedItem().(TenantItem); ok {
+					lt := item.tenant
+					m.loginWanted = &lt
+					m.quitting = true
+					return m, tea.Quit
+				}
 			case "q", "ctrl+c":
 				m.quitting = true
 				return m, tea.Quit
@@ -210,6 +263,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.selected = &t
 		m.quitting = true
 		return m, tea.Quit
+
+	case sessionsLoadedMsg:
+		m.applySessions(msg.valid)
+		return m, nil
 
 	case pimLoadedMsg:
 		// Ignore a result that arrives after the user left the PIM screen.
@@ -313,4 +370,9 @@ func (m Model) pimBox(body string) string {
 
 func (m Model) Selected() *config.Tenant {
 	return m.selected
+}
+
+// LoginWanted returns the tenant the user asked to (re)login with "l", or nil.
+func (m Model) LoginWanted() *config.Tenant {
+	return m.loginWanted
 }

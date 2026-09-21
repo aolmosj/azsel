@@ -5,10 +5,21 @@ import (
 	"github.com/aolmosj/azsel/internal/pim"
 )
 
+// sessionState is what azsel knows about a tenant's login session: not yet
+// checked, usable, or lapsed.
+type sessionState int
+
+const (
+	sessionUnknown sessionState = iota
+	sessionOK
+	sessionExpired
+)
+
 type TenantItem struct {
 	tenant    config.Tenant
 	active    bool
 	isDefault bool
+	session   sessionState
 }
 
 func NewTenantItem(t config.Tenant, active, isDefault bool) TenantItem {

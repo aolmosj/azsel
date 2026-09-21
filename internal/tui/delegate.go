@@ -48,9 +48,14 @@ func (d tenantDelegate) Render(w io.Writer, m list.Model, index int, listItem li
 		titleStyle, descStyle = selectedTitleStyle, selectedDescStyle
 	}
 
+	title := titleStyle.Render(name)
+	if item.session == sessionExpired {
+		title += expiredStyle.Render("  session expired")
+	}
+
 	fmt.Fprintf(w, "%s%s\n  %s",
 		item.marker(),
-		titleStyle.Render(name),
+		title,
 		descStyle.Render(desc))
 }
 
@@ -68,6 +73,7 @@ func (d tenantDelegate) ShortHelp() []key.Binding {
 		key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "activate")),
 		key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "set default")),
 		key.NewBinding(key.WithKeys("p"), key.WithHelp("p", "pim roles")),
+		key.NewBinding(key.WithKeys("l"), key.WithHelp("l", "login")),
 	}
 }
 

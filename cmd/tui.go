@@ -52,6 +52,14 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		return pim.ListEligible(t.ConfigDir, t.TenantID)
 	}
 	model := tui.NewModel(cfg.Tenants, currentDir, defaultName, setDefault, listPIM)
+	// The on-open session check needs the Azure CLI; without it the TUI simply
+	// shows no login markers rather than failing to open.
+	if azure.Available() == nil {
+		model.SetSessionCheck(func(t config.Tenant) bool {
+			valid, _ := azure.SessionState(t.ConfigDir)
+			return valid
+		})
+	}
 
 	p := tea.NewProgram(model, tea.WithOutput(os.Stderr))
 	finalModel, err := p.Run()
@@ -59,17 +67,30 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("TUI error: %w", err)
 	}
 
-	if m, ok := finalModel.(tui.Model); ok {
-		if selected := m.Selected(); selected != nil {
-			if err := config.EnsureSharedExtensionsLink(selected.ConfigDir); err != nil {
-				return err
-			}
-			exports := fmt.Sprintf("export AZURE_CONFIG_DIR=%s\n", selected.ConfigDir)
-			if err := config.WriteEnv(exports); err != nil {
-				return err
-			}
-			fmt.Fprintf(os.Stderr, "Activated tenant %q\n", selected.Name)
+	m, ok := finalModel.(tui.Model)
+	if !ok {
+		return nil
+	}
+	if selected := m.Selected(); selected != nil {
+		if err := config.EnsureSharedExtensionsLink(selected.ConfigDir); err != nil {
+			return err
 		}
+		exports := fmt.Sprintf("export AZURE_CONFIG_DIR=%s\n", selected.ConfigDir)
+		if err := config.WriteEnv(exports); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "Activated tenant %q\n", selected.Name)
+	}
+	// The interactive login runs after the TUI closes, so az owns the terminal.
+	if lw := m.LoginWanted(); lw != nil {
+		if err := azure.Available(); err != nil {
+			return err
+		}
+		if err := config.EnsureSharedExtensionsLink(lw.ConfigDir); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "Logging in to tenant %q...\n", lw.Name)
+		return azure.Login(lw.TenantID, lw.ConfigDir, false)
 	}
 	return nil
 }

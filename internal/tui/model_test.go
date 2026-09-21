@@ -299,8 +299,8 @@ func TestHelpContentsAreComplete(t *testing.T) {
 	for _, b := range newDelegate().ShortHelp() {
 		declared[b.Help().Key] = true
 	}
-	if !declared["enter"] || !declared["d"] || !declared["p"] {
-		t.Errorf("the delegate must declare enter, d and p, has %v", declared)
+	if !declared["enter"] || !declared["d"] || !declared["p"] || !declared["l"] {
+		t.Errorf("the delegate must declare enter, d, p and l, has %v", declared)
 	}
 	if declared["/"] || declared["q"] {
 		t.Errorf("the delegate must not declare / or q (the list provides them): %v", declared)
@@ -333,7 +333,7 @@ func TestRenderedHelpHasNoRepeatedEntries(t *testing.T) {
 	updated, _ := m.Update(tea.WindowSizeMsg{Width: 100, Height: 14})
 	view := ansi.Strip(updated.(Model).View())
 
-	for _, entry := range []string{"/ filter", "q quit", "enter activate", "p pim roles"} {
+	for _, entry := range []string{"/ filter", "q quit", "enter activate", "p pim roles", "l login"} {
 		if got := strings.Count(view, entry); got != 1 {
 			t.Errorf("%q appears %d times in the view, wanted 1:\n%s", entry, got, view)
 		}
@@ -681,6 +681,71 @@ func TestPimScreenFilters(t *testing.T) {
 	m, _ = send(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	if m.screen != screenList {
 		t.Errorf("esc did not return to the tenant list: %v", m.screen)
+	}
+}
+
+// "l" records the selected tenant for login and quits, so cmd/tui.go can run
+// the interactive az login after the program closes.
+func TestLoginKeyRecordsSelectedTenant(t *testing.T) {
+	ts := tenants()
+	m := NewModel(ts, "", "", nil, nil)
+	m, _ = send(t, m, keyMsg("l"))
+
+	lw := m.LoginWanted()
+	if lw == nil {
+		t.Fatal("l did not record a tenant to login")
+	}
+	if lw.Name != ts[0].Name {
+		t.Errorf("LoginWanted() = %q, wanted the selected tenant %q", lw.Name, ts[0].Name)
+	}
+	if v := m.View(); v != "" {
+		t.Errorf("View() = %q after l, wanted empty (quitting)", v)
+	}
+}
+
+// While filtering, "l" is search text, not the login command.
+func TestLoginKeyIsTextWhileFiltering(t *testing.T) {
+	m := NewModel(tenants(), "", "", nil, nil)
+	m, _ = send(t, m, keyMsg("/"))
+	if m.list.FilterState() != list.Filtering {
+		t.Fatalf("did not enter filtering")
+	}
+	m, _ = send(t, m, keyMsg("l"))
+	if m.LoginWanted() != nil {
+		t.Error("l recorded a login while filtering")
+	}
+}
+
+// The on-open session check marks tenants whose login has lapsed; the marker
+// shows in the render.
+func TestSessionCheckMarksExpired(t *testing.T) {
+	ts := tenants() // acme, globex
+	m := NewModel(ts, "", "", nil, nil)
+	m.SetSessionCheck(func(t config.Tenant) bool { return t.Name == "acme" }) // globex expired
+
+	cmd := m.Init()
+	if cmd == nil {
+		t.Fatal("Init returned no session-check command")
+	}
+	m, _ = send(t, m, cmd())
+
+	d := newDelegate()
+	var expired, ok bytes.Buffer
+	d.Render(&expired, m.list, 1, m.list.Items()[1]) // globex
+	d.Render(&ok, m.list, 0, m.list.Items()[0])      // acme
+	if !strings.Contains(expired.String(), "expired") {
+		t.Errorf("globex should be marked expired: %q", expired.String())
+	}
+	if strings.Contains(ok.String(), "expired") {
+		t.Errorf("acme should not be marked expired: %q", ok.String())
+	}
+}
+
+// Without a session checker, Init does nothing and no tenant is marked.
+func TestSessionCheckDisabledByDefault(t *testing.T) {
+	m := NewModel(tenants(), "", "", nil, nil)
+	if cmd := m.Init(); cmd != nil {
+		t.Error("Init started a session check without a checker")
 	}
 }
 

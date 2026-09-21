@@ -73,5 +73,10 @@ var (
 	statusMsgStyle = lipgloss.NewStyle().
 			Foreground(azureLight)
 
+	// A lapsed login session, called out in red next to the tenant name.
+	expiredStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#D13438")).
+			Bold(true)
+
 	appStyle = lipgloss.NewStyle().Margin(1, 2)
 )
