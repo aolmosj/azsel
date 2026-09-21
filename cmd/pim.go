@@ -45,20 +45,9 @@ This is read-only; it does not activate anything.`,
 				return nil
 			}
 
-			// The tenant to query: the named one, else the default, else ask.
-			var tenant *config.Tenant
-			if len(args) == 1 {
-				tenant = cfg.FindTenant(args[0])
-				if tenant == nil {
-					return fmt.Errorf("tenant %q not found", args[0])
-				}
-			} else {
-				if info, err := config.ResolveDefault(cfg); err == nil && info.State == config.DefaultSet {
-					tenant = cfg.FindTenant(info.Tenant)
-				}
-				if tenant == nil {
-					return fmt.Errorf("no tenant given and no default set; pass a name or run 'azsel default <name>'")
-				}
+			tenant, err := resolveTenant(cfg, args)
+			if err != nil {
+				return err
 			}
 
 			rows, err := pim.ListEligible(tenant.ConfigDir, tenant.TenantID)
