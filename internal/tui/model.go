@@ -21,6 +21,16 @@ const (
 	screenList screen = iota
 	screenConfirm
 	screenPIM
+	screenExpired
+)
+
+// expiredAction is what the user was attempting when the "session expired"
+// prompt appeared, so "proceed anyway" can resume it.
+type expiredAction int
+
+const (
+	actActivate expiredAction = iota
+	actPIM
 )
 
 type Model struct {
@@ -47,6 +57,12 @@ type Model struct {
 	// loginWanted records that the user asked to (re)login the selected tenant;
 	// cmd/tui.go runs the interactive az login after the program exits.
 	loginWanted *config.Tenant
+
+	// expiredTenant is the tenant behind the "session expired" prompt, and
+	// expiredAction what the user was doing (activate, view PIM) so it can be
+	// resumed on "proceed anyway".
+	expiredTenant config.Tenant
+	expiredAction expiredAction
 
 	// screen selects the view. confirmName carries the "d" prompt's subject;
 	// setting a default rewrites ~/.azure, more consequential than anything else
@@ -189,6 +205,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case screenExpired:
+			// The "session expired" prompt: log in, proceed anyway, or cancel.
+			switch msg.String() {
+			case "l":
+				lt := m.expiredTenant
+				m.loginWanted = &lt
+				m.quitting = true
+				return m, tea.Quit
+			case "enter":
+				t := m.expiredTenant
+				if m.expiredAction == actPIM {
+					m.screen = screenPIM
+					m.pimTenant = t.Name
+					m.pimErr = ""
+					m.pimLoading = true
+					m.pimList.SetItems(nil)
+					m.pimList.Title = "Eligible PIM roles — " + t.Name
+					return m, tea.Batch(m.spinner.Tick, loadPIMCmd(m.listPIM, t))
+				}
+				m.selected = &t
+				m.quitting = true
+				return m, tea.Quit
+			default:
+				m.screen = screenList
+			}
+			return m, nil
+
 		case screenPIM:
 			// While loading or showing an error there is no list to drive, so
 			// esc/q just returns. esc works mid-load; the result-message guards
@@ -201,7 +244,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			// With the list shown, esc/q returns — but only when not filtering,
+			// With the list shown, esc/q returns â but only when not filtering,
 			// where esc cancels the filter and the keys are search text. Anything
 			// else (/, arrows) drives the list.
 			if m.pimList.FilterState() != list.Filtering {
@@ -220,6 +263,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				break
 			}
 			switch msg.String() {
+			case "enter":
+				// On an expired session, warn and offer to log in before activating â the next
+				// az command would otherwise just fail. Unknown/valid sessions fall through to
+				// the delegate, which activates as usual.
+				if item, ok := m.list.SelectedItem().(TenantItem); ok && item.session == sessionExpired {
+					m.screen = screenExpired
+					m.expiredTenant = item.tenant
+					m.expiredAction = actActivate
+					return m, nil
+				}
 			case "l":
 				// Record the intent and quit; cmd/tui.go runs the interactive az login after
 				// the program exits, as it does for activation.
@@ -246,12 +299,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// Only with a loader, and only on a real item.
 				if m.listPIM != nil {
 					if item, ok := m.list.SelectedItem().(TenantItem); ok {
+						if item.session == sessionExpired {
+							m.screen = screenExpired
+							m.expiredTenant = item.tenant
+							m.expiredAction = actPIM
+							return m, nil
+						}
 						m.screen = screenPIM
 						m.pimTenant = item.tenant.Name
 						m.pimErr = ""
 						m.pimLoading = true
 						m.pimList.SetItems(nil)
-						m.pimList.Title = "Eligible PIM roles — " + item.tenant.Name
+						m.pimList.Title = "Eligible PIM roles â " + item.tenant.Name
 						return m, tea.Batch(m.spinner.Tick, loadPIMCmd(m.listPIM, item.tenant))
 					}
 				}
@@ -310,6 +369,8 @@ func (m Model) View() string {
 	switch m.screen {
 	case screenConfirm:
 		return m.confirmView()
+	case screenExpired:
+		return m.expiredView()
 	case screenPIM:
 		return m.pimView()
 	}
@@ -344,8 +405,8 @@ func (m Model) confirmView() string {
 func (m Model) pimView() string {
 	switch {
 	case m.pimLoading:
-		return m.pimBox(confirmTitleStyle.Render("Eligible PIM roles — "+m.pimTenant) +
-			"\n\n" + m.spinner.View() + " Loading eligible roles…")
+		return m.pimBox(confirmTitleStyle.Render("Eligible PIM roles â "+m.pimTenant) +
+			"\n\n" + m.spinner.View() + " Loading eligible rolesâ¦")
 	case m.pimErr != "":
 		return m.pimBox(statusMsgStyle.Render("Could not load PIM roles:") +
 			"\n" + m.pimErr + "\n\n" + confirmKeysStyle.Render("esc") + " back")
@@ -358,6 +419,15 @@ func (m Model) pimView() string {
 
 // pimBox centers a message the way confirmView does, for the PIM screen's
 // non-list states.
+// expiredView is the prompt shown when activating a tenant whose login lapsed.
+func (m Model) expiredView() string {
+	return m.pimBox(confirmTitleStyle.Render(m.expiredTenant.Name+" â session expired") +
+		"\n\nIts Azure login has expired; az commands will fail until you sign in again." +
+		"\n\n" + confirmKeysStyle.Render("l") + " log in     " +
+		confirmKeysStyle.Render("enter") + " proceed anyway     " +
+		confirmKeysStyle.Render("esc") + " cancel")
+}
+
 func (m Model) pimBox(body string) string {
 	box := confirmBoxStyle.Render(body)
 	fh, fv := lipgloss.NewStyle().Margin(1, 2).GetFrameSize()

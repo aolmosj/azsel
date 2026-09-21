@@ -135,6 +135,24 @@ echo '{"value":[]}'`)
 	}
 }
 
+// An expired session is reported with an actionable message before any PIM
+// call, rather than surfacing a raw az error.
+func TestPIMListExpiredSession(t *testing.T) {
+	listSandbox(t, "contoso")
+	fakeAzureCLI(t, `case "$*" in
+  *get-access-token*) exit 1 ;;
+  *) echo '{"value":[]}' ;;
+esac`)
+	quiet(t)
+	err := run(t, newPIMCmd(), "list", "contoso")
+	if err == nil {
+		t.Fatal("pim list returned nil on an expired session")
+	}
+	if !strings.Contains(err.Error(), "expired") || !strings.Contains(err.Error(), "azsel login") {
+		t.Errorf("error = %q, wanted an expired-session message pointing at 'azsel login'", err)
+	}
+}
+
 func TestPIMListNoArgNoDefault(t *testing.T) {
 	listSandbox(t, "contoso")
 	fakeAzureCLI(t, "true")

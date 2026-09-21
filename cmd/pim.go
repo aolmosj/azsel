@@ -49,6 +49,9 @@ This is read-only; it does not activate anything.`,
 			if err != nil {
 				return err
 			}
+			if err := requireSession(tenant); err != nil {
+				return err
+			}
 
 			rows, err := pim.ListEligible(tenant.ConfigDir, tenant.TenantID)
 			if err != nil {
