@@ -5,6 +5,7 @@ import (
 
 	"github.com/aolmosj/azsel/internal/config"
 	"github.com/aolmosj/azsel/internal/pim"
+	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -45,9 +46,11 @@ type Model struct {
 	confirmName string
 	status      string
 
-	// PIM screen state, valid while screen == screenPIM.
+	// PIM screen state, valid while screen == screenPIM. The eligible roles are
+	// held in their own filterable list, so "/" narrows them like the tenant
+	// list and long results scroll.
 	pimTenant  string
-	pimRows    []pim.Eligible
+	pimList    list.Model
 	pimErr     string
 	pimLoading bool
 	spinner    spinner.Model
@@ -78,7 +81,18 @@ func NewModel(tenants []config.Tenant, currentConfigDir, defaultName string, set
 	sp.Spinner = spinner.Dot
 	sp.Style = lipgloss.NewStyle().Foreground(azureBlue)
 
-	return Model{list: l, setDefault: setDefault, listPIM: listPIM, spinner: sp}
+	// The PIM results get their own list so they filter and scroll. Its quit key
+	// is repurposed as "back" (the program is not quit from here).
+	pl := list.New(nil, list.NewDefaultDelegate(), 80, 20)
+	pl.Title = "Eligible PIM roles"
+	pl.SetShowStatusBar(false)
+	pl.SetFilteringEnabled(true)
+	pl.Styles.Title = titleStyle
+	pl.Styles.FilterPrompt = lipgloss.NewStyle().Foreground(azureBlue)
+	pl.Styles.FilterCursor = lipgloss.NewStyle().Foreground(azureBlue)
+	pl.KeyMap.Quit = key.NewBinding(key.WithKeys("q", "esc"), key.WithHelp("esc", "back"))
+
+	return Model{list: l, setDefault: setDefault, listPIM: listPIM, spinner: sp, pimList: pl}
 }
 
 // applyDefault marks name as the default across the list items, leaving one
@@ -106,6 +120,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		h, v := lipgloss.NewStyle().Margin(1, 2).GetFrameSize()
 		m.list.SetSize(msg.Width-h, msg.Height-v)
+		m.pimList.SetSize(msg.Width-h, msg.Height-v)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -131,14 +146,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 
 		case screenPIM:
-			// A read-only screen: esc/q returns to the list. esc works even mid
-			// load; the guards on the result messages drop a late arrival.
-			switch msg.String() {
-			case "esc", "q":
-				m.screen = screenList
-				m.pimRows, m.pimErr, m.pimLoading = nil, "", false
+			// While loading or showing an error there is no list to drive, so
+			// esc/q just returns. esc works mid-load; the result-message guards
+			// drop a late arrival.
+			if m.pimLoading || m.pimErr != "" {
+				switch msg.String() {
+				case "esc", "q":
+					m.screen = screenList
+					m.pimErr, m.pimLoading = "", false
+				}
+				return m, nil
 			}
-			return m, nil
+			// With the list shown, esc/q returns — but only when not filtering,
+			// where esc cancels the filter and the keys are search text. Anything
+			// else (/, arrows) drives the list.
+			if m.pimList.FilterState() != list.Filtering {
+				switch msg.String() {
+				case "esc", "q":
+					m.screen = screenList
+					return m, nil
+				}
+			}
+			var cmd tea.Cmd
+			m.pimList, cmd = m.pimList.Update(msg)
+			return m, cmd
 
 		default: // screenList
 			if m.list.FilterState() == list.Filtering {
@@ -164,8 +195,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if item, ok := m.list.SelectedItem().(TenantItem); ok {
 						m.screen = screenPIM
 						m.pimTenant = item.tenant.Name
-						m.pimRows, m.pimErr = nil, ""
+						m.pimErr = ""
 						m.pimLoading = true
+						m.pimList.SetItems(nil)
+						m.pimList.Title = "Eligible PIM roles — " + item.tenant.Name
 						return m, tea.Batch(m.spinner.Tick, loadPIMCmd(m.listPIM, item.tenant))
 					}
 				}
@@ -182,7 +215,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Ignore a result that arrives after the user left the PIM screen.
 		if m.screen == screenPIM {
 			m.pimLoading = false
-			m.pimRows = msg.rows
+			items := make([]list.Item, len(msg.rows))
+			for i, r := range msg.rows {
+				items[i] = pimItem{e: r}
+			}
+			m.pimList.SetItems(items)
 		}
 		return m, nil
 
@@ -244,39 +281,28 @@ func (m Model) confirmView() string {
 	return appStyle.Render(lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box))
 }
 
-// pimView shows the eligible resource roles for the tenant chosen with "p":
-// a spinner while loading, the error if it failed, or the rows. Read-only —
-// esc returns to the list. Centered like confirmView. A very long list can
-// overflow a small terminal; a viewport or a second list would be the upgrade.
+// pimView shows the eligible resource roles for the tenant chosen with "p".
+// Loading, an error, and an empty result are centered boxes; the populated
+// result is a filterable, scrolling list ("/" narrows it, esc goes back).
 func (m Model) pimView() string {
-	lines := []string{
-		confirmTitleStyle.Render("Eligible PIM roles — " + m.pimTenant),
-		"",
-	}
 	switch {
 	case m.pimLoading:
-		lines = append(lines, m.spinner.View()+" Loading eligible roles…")
+		return m.pimBox(confirmTitleStyle.Render("Eligible PIM roles — "+m.pimTenant) +
+			"\n\n" + m.spinner.View() + " Loading eligible roles…")
 	case m.pimErr != "":
-		lines = append(lines, statusMsgStyle.Render("Could not load PIM roles:"), m.pimErr)
-	case len(m.pimRows) == 0:
-		lines = append(lines, "No eligible resource-role assignments.")
-	default:
-		for _, r := range m.pimRows {
-			until := "permanent"
-			if r.End != nil {
-				until = r.End.Format("2006-01-02 15:04")
-			}
-			detail := "  (" + r.ScopeType + ") · until " + until
-			if via := r.ViaGroup(); via != "" {
-				detail += " · via " + via
-			}
-			lines = append(lines, activeStyle.Render(r.RoleName)+"  "+r.ScopeName+
-				pimDetailStyle.Render(detail))
-		}
+		return m.pimBox(statusMsgStyle.Render("Could not load PIM roles:") +
+			"\n" + m.pimErr + "\n\n" + confirmKeysStyle.Render("esc") + " back")
+	case len(m.pimList.Items()) == 0:
+		return m.pimBox("No eligible resource-role assignments for " + m.pimTenant + "." +
+			"\n\n" + confirmKeysStyle.Render("esc") + " back")
 	}
-	lines = append(lines, "", confirmKeysStyle.Render("esc")+" back")
+	return appStyle.Render(m.pimList.View())
+}
 
-	box := confirmBoxStyle.Render(lipgloss.JoinVertical(lipgloss.Left, lines...))
+// pimBox centers a message the way confirmView does, for the PIM screen's
+// non-list states.
+func (m Model) pimBox(body string) string {
+	box := confirmBoxStyle.Render(body)
 	fh, fv := lipgloss.NewStyle().Margin(1, 2).GetFrameSize()
 	w, h := m.width-fh, m.height-fv
 	if w <= 0 || h <= 0 {
