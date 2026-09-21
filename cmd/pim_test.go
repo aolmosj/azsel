@@ -19,7 +19,7 @@ const pimTwoRows = `{
         "expandedProperties": {
           "scope": {"id": "/subscriptions/aaa", "displayName": "Prod Sub", "type": "subscription"},
           "roleDefinition": {"displayName": "Reader"},
-          "principal": {"displayName": "PlatformTeam", "type": "Group"}
+          "principal": {"id": "grp-1", "displayName": "PlatformTeam", "type": "Group"}
         }
       }
     },
@@ -31,20 +31,22 @@ const pimTwoRows = `{
         "expandedProperties": {
           "scope": {"id": "/subscriptions/aaa/resourceGroups/rg1", "displayName": "rg1", "type": "resourcegroup"},
           "roleDefinition": {"displayName": "Contributor"},
-          "principal": {"displayName": "Antonio", "type": "User"}
+          "principal": {"id": "me-id", "displayName": "Antonio", "type": "User"}
         }
       }
     }
   ]
 }`
 
-// fakeAzurePIM is a fake `az` that answers the two calls ListEligible makes: the
-// subscriptions list and the per-scope eligibility query.
+// fakeAzurePIM is a fake `az` answering the Strategy 1 calls ListEligible makes:
+// the caller's Graph identity, their groups, and the atScopeAndBelow eligibility
+// query (whose rows are assigned to that identity/group).
 const fakeAzurePIM = `case "$*" in
-  *"/subscriptions?api-version"*)
-    cat <<'JSON'
-{"value":[{"subscriptionId":"sub-1"}]}
-JSON
+  *"/v1.0/me?"*)
+    echo '{"id":"me-id"}'
+    ;;
+  *transitiveMemberOf*)
+    echo '{"value":[{"id":"grp-1"}]}'
     ;;
   *roleEligibilityScheduleInstances*)
     cat <<'JSON'
