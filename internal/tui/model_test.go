@@ -684,6 +684,66 @@ func TestPimScreenFilters(t *testing.T) {
 	}
 }
 
+// Activating a tenant whose session has expired prompts first (log in, activate
+// anyway, or cancel) instead of switching silently.
+func TestEnterOnExpiredSessionPrompts(t *testing.T) {
+	ts := tenants()
+	base := NewModel(ts, "", "", nil, nil)
+	base.applySessions(map[string]bool{"acme": false}) // acme (selected) expired
+
+	m, _ := send(t, base, keyMsg("enter"))
+	if m.screen != screenExpired {
+		t.Fatalf("enter on an expired tenant did not prompt: screen = %v", m.screen)
+	}
+	if m.Selected() != nil {
+		t.Error("enter activated an expired tenant without prompting")
+	}
+	if v := ansi.Strip(m.View()); !strings.Contains(v, "session expired") {
+		t.Errorf("prompt missing:\n%s", v)
+	}
+
+	if ml, _ := send(t, m, keyMsg("l")); ml.LoginWanted() == nil || ml.LoginWanted().Name != ts[0].Name {
+		t.Errorf("l from the prompt did not record a login for %s", ts[0].Name)
+	}
+	if ma, _ := send(t, m, keyMsg("enter")); ma.Selected() == nil || ma.Selected().Name != ts[0].Name {
+		t.Error("enter from the prompt did not activate anyway")
+	}
+	if me, _ := send(t, m, tea.KeyMsg{Type: tea.KeyEsc}); me.screen != screenList {
+		t.Errorf("esc did not cancel the prompt: screen = %v", me.screen)
+	}
+}
+
+// Viewing PIM on an expired tenant also prompts; "proceed anyway" starts the
+// load, "l" logs in.
+func TestPimKeyOnExpiredSessionPrompts(t *testing.T) {
+	m := NewModel(tenants(), "", "", nil, fakePIM(pimRows, nil))
+	m.applySessions(map[string]bool{"acme": false})
+
+	m, _ = send(t, m, keyMsg("p"))
+	if m.screen != screenExpired {
+		t.Fatalf("p on an expired tenant did not prompt: screen = %v", m.screen)
+	}
+	if mp, _ := send(t, m, keyMsg("enter")); mp.screen != screenPIM {
+		t.Errorf("proceed anyway did not start the PIM screen: %v", mp.screen)
+	}
+	if ml, _ := send(t, m, keyMsg("l")); ml.LoginWanted() == nil || ml.LoginWanted().Name != "acme" {
+		t.Error("l from the PIM prompt did not record a login for the expired tenant")
+	}
+}
+
+// A valid (or not-yet-checked) session activates on enter as before.
+func TestEnterOnValidSessionActivates(t *testing.T) {
+	m := NewModel(tenants(), "", "", nil, nil)
+	m.applySessions(map[string]bool{"acme": true})
+	_, cmd := send(t, m, keyMsg("enter"))
+	if cmd == nil {
+		t.Fatal("enter emitted no command for a valid session")
+	}
+	if _, ok := cmd().(selectTenantMsg); !ok {
+		t.Fatalf("enter on a valid session emitted %T, wanted selectTenantMsg", cmd())
+	}
+}
+
 // "l" records the selected tenant for login and quits, so cmd/tui.go can run
 // the interactive az login after the program closes.
 func TestLoginKeyRecordsSelectedTenant(t *testing.T) {
