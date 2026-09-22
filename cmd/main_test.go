@@ -17,7 +17,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv("AZSEL_INTEGRATION") == "" {
 		if dir, err := os.MkdirTemp("", "azsel-noop-az"); err == nil {
 			if err := os.WriteFile(filepath.Join(dir, "az"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err == nil {
-				os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+				_ = os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 			}
 		}
 	}
