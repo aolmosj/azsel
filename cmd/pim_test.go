@@ -38,20 +38,23 @@ const pimTwoRows = `{
   ]
 }`
 
-// fakeAzurePIM is a fake `az` answering the Strategy 1 calls ListEligible makes:
-// the caller's Graph identity, their groups, and the atScopeAndBelow eligibility
-// query (whose rows are assigned to that identity/group).
+// fakeAzurePIM is a fake `az` answering the calls ListEligible makes: a token
+// (also satisfies the session check), the subscription list (one in the
+// tenant), and the per-subscription eligibility query.
+// Cases are ordered most-specific first: the eligibility URL also contains
+// "subscriptions" and "api-version", so it must be matched before the plain
+// subscriptions-list case (shells differ on the quoted "?" in a case pattern).
 const fakeAzurePIM = `case "$*" in
-  *"/v1.0/me?"*)
-    echo '{"id":"me-id"}'
-    ;;
-  *transitiveMemberOf*)
-    echo '{"value":[{"id":"grp-1"}]}'
+  *get-access-token*)
+    echo "faketoken"
     ;;
   *roleEligibilityScheduleInstances*)
     cat <<'JSON'
 ` + pimTwoRows + `
 JSON
+    ;;
+  *subscriptions*)
+    echo '{"value":[{"subscriptionId":"sub-1"}]}'
     ;;
   *)
     echo '{"value":[]}'
@@ -114,11 +117,13 @@ func TestPIMListResolvesDefaultWhenNoArg(t *testing.T) {
 
 	sentinel := filepath.Join(t.TempDir(), "scoped-config-dir")
 	t.Setenv("AZSEL_TEST_SENTINEL", sentinel)
-	// Record the config dir on the (single, non-concurrent) subscriptions call.
+	// Record the config dir on the subscriptions call and report no subscriptions.
 	fakeAzureCLI(t, `case "$*" in
-  *"/subscriptions?api-version"*) printf '%s' "$AZURE_CONFIG_DIR" > "$AZSEL_TEST_SENTINEL" ;;
-esac
-echo '{"value":[]}'`)
+  *get-access-token*) echo "faketoken" ;;
+  *roleEligibilityScheduleInstances*) echo '{"value":[]}' ;;
+  *subscriptions*) printf '%s' "$AZURE_CONFIG_DIR" > "$AZSEL_TEST_SENTINEL"; echo '{"value":[]}' ;;
+  *) echo '{"value":[]}' ;;
+esac`)
 
 	quiet(t)
 	if err := run(t, newPIMCmd(), "list"); err != nil {
