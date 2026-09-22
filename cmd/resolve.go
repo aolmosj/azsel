@@ -35,7 +35,7 @@ func warnIfExpired(t *config.Tenant) {
 	if azure.Available() != nil {
 		return
 	}
-	if valid, _ := azure.SessionState(t.ConfigDir); !valid {
+	if valid, _ := azure.SessionState(t.ConfigDir, t.TenantID); !valid {
 		fmt.Fprintf(os.Stderr, "Note: tenant %q's session has expired; run 'azsel login %s'.\n", t.Name, t.Name)
 	}
 }

@@ -98,14 +98,24 @@ func LoginServicePrincipal(tenantID, configDir, appID, certificate, secret strin
 	return run(cmd)
 }
 
-// SessionState reports whether the tenant logged into configDir still has a
-// usable session. It asks az to acquire a token (which exercises the refresh
-// token) and reads its expiry; a lapsed session — az's AADSTS700082, or never
-// having logged in — makes az exit non-zero, reported here as valid=false.
-// Callers gate on Available first; any az failure is treated as "not signed
-// in" rather than surfaced, since that is what the caller shows.
-func SessionState(configDir string) (valid bool, expiresOn string) {
-	cmd := command(configDir, "account", "get-access-token", "--query", "expiresOn", "--output", "tsv")
+// SessionState reports whether the profile in configDir still has a usable
+// session for the given tenant. It asks az to acquire a token (which exercises
+// the refresh token) and reads its expiry; a lapsed session — az's AADSTS700082
+// / AADSTS70043, or never having logged in — makes az exit non-zero, reported
+// here as valid=false.
+//
+// tenantID matters: a profile can hold subscriptions from several tenants and
+// its active one may be a different tenant, so without --tenant this would check
+// the wrong session. An empty tenantID falls back to the active session.
+// Callers gate on Available first; any az failure is treated as "not signed in"
+// rather than surfaced, since that is what the caller shows.
+func SessionState(configDir, tenantID string) (valid bool, expiresOn string) {
+	args := []string{"account", "get-access-token"}
+	if strings.TrimSpace(tenantID) != "" {
+		args = append(args, "--tenant", tenantID)
+	}
+	args = append(args, "--query", "expiresOn", "--output", "tsv")
+	cmd := command(configDir, args...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &bytes.Buffer{}

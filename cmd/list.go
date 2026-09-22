@@ -113,7 +113,7 @@ func checkSessions(tenants []config.Tenant) map[string]bool {
 		go func(t config.Tenant) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			valid, _ := azure.SessionState(t.ConfigDir)
+			valid, _ := azure.SessionState(t.ConfigDir, t.TenantID)
 			mu.Lock()
 			session[t.Name] = valid
 			mu.Unlock()

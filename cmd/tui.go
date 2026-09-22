@@ -56,7 +56,7 @@ func runTUI(cmd *cobra.Command, args []string) error {
 	// shows no login markers rather than failing to open.
 	if azure.Available() == nil {
 		model.SetSessionCheck(func(t config.Tenant) bool {
-			valid, _ := azure.SessionState(t.ConfigDir)
+			valid, _ := azure.SessionState(t.ConfigDir, t.TenantID)
 			return valid
 		})
 	}
