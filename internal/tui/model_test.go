@@ -539,8 +539,8 @@ func TestPimKeyOpensLoadingForSelectedTenant(t *testing.T) {
 	if m.screen != screenPIM {
 		t.Fatalf("p did not open the PIM screen: screen = %v", m.screen)
 	}
-	if m.pimTenant != ts[0].Name {
-		t.Errorf("PIM opened for %q, wanted the selected tenant %q", m.pimTenant, ts[0].Name)
+	if m.pimTenant.Name != ts[0].Name {
+		t.Errorf("PIM opened for %q, wanted the selected tenant %q", m.pimTenant.Name, ts[0].Name)
 	}
 	if !m.pimLoading {
 		t.Error("PIM screen is not in the loading state")
@@ -579,6 +579,22 @@ func TestPimErrMsgIsShown(t *testing.T) {
 	v := ansi.Strip(m.View())
 	if !strings.Contains(v, "Could not load PIM roles") || !strings.Contains(v, "boom") {
 		t.Errorf("the error was not shown:\n%s", v)
+	}
+}
+
+// The PIM error is most often an expired session, so "l" re-logs in the tenant.
+func TestPimErrorOffersLogin(t *testing.T) {
+	ts := tenants()
+	m := NewModel(ts, "", "", nil, fakePIM(nil, errTest))
+	m, _ = send(t, m, keyMsg("p"))
+	m, _ = send(t, m, pimErrMsg{err: errTest})
+
+	if v := ansi.Strip(m.View()); !strings.Contains(v, "log in") {
+		t.Errorf("the error view should offer login:\n%s", v)
+	}
+	m, _ = send(t, m, keyMsg("l"))
+	if m.LoginWanted() == nil || m.LoginWanted().Name != ts[0].Name {
+		t.Errorf("l on the PIM error did not record a login for %q", ts[0].Name)
 	}
 }
 

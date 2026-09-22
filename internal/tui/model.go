@@ -7,7 +7,6 @@ import (
 	"github.com/aolmosj/azsel/internal/pim"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -74,11 +73,10 @@ type Model struct {
 	// PIM screen state, valid while screen == screenPIM. The eligible roles are
 	// held in their own filterable list, so "/" narrows them like the tenant
 	// list and long results scroll.
-	pimTenant  string
+	pimTenant  config.Tenant
 	pimList    list.Model
 	pimErr     string
 	pimLoading bool
-	spinner    spinner.Model
 
 	width  int
 	height int
@@ -102,10 +100,6 @@ func NewModel(tenants []config.Tenant, currentConfigDir, defaultName string, set
 	l.Styles.FilterPrompt = lipgloss.NewStyle().Foreground(azureBlue)
 	l.Styles.FilterCursor = lipgloss.NewStyle().Foreground(azureBlue)
 
-	sp := spinner.New()
-	sp.Spinner = spinner.Dot
-	sp.Style = lipgloss.NewStyle().Foreground(azureBlue)
-
 	// The PIM results get their own list so they filter and scroll. Its quit key
 	// is repurposed as "back" (the program is not quit from here).
 	pl := list.New(nil, list.NewDefaultDelegate(), 80, 20)
@@ -117,7 +111,7 @@ func NewModel(tenants []config.Tenant, currentConfigDir, defaultName string, set
 	pl.Styles.FilterCursor = lipgloss.NewStyle().Foreground(azureBlue)
 	pl.KeyMap.Quit = key.NewBinding(key.WithKeys("q", "esc"), key.WithHelp("esc", "back"))
 
-	return Model{list: l, setDefault: setDefault, listPIM: listPIM, spinner: sp, pimList: pl}
+	return Model{list: l, setDefault: setDefault, listPIM: listPIM, pimList: pl}
 }
 
 // applyDefault marks name as the default across the list items, leaving one
@@ -217,12 +211,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				t := m.expiredTenant
 				if m.expiredAction == actPIM {
 					m.screen = screenPIM
-					m.pimTenant = t.Name
+					m.pimTenant = t
 					m.pimErr = ""
 					m.pimLoading = true
 					m.pimList.SetItems(nil)
 					m.pimList.Title = "Eligible PIM roles — " + t.Name
-					return m, tea.Batch(m.spinner.Tick, loadPIMCmd(m.listPIM, t))
+					return m, loadPIMCmd(m.listPIM, t)
 				}
 				m.selected = &t
 				m.quitting = true
@@ -241,6 +235,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "esc", "q":
 					m.screen = screenList
 					m.pimErr, m.pimLoading = "", false
+				case "l":
+					// The error is most often an expired session for this tenant;
+					// offer re-login right here (cmd/tui.go runs it after exit).
+					if m.pimErr != "" {
+						lt := m.pimTenant
+						m.loginWanted = &lt
+						m.quitting = true
+						return m, tea.Quit
+					}
 				}
 				return m, nil
 			}
@@ -306,12 +309,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							return m, nil
 						}
 						m.screen = screenPIM
-						m.pimTenant = item.tenant.Name
+						m.pimTenant = item.tenant
 						m.pimErr = ""
 						m.pimLoading = true
 						m.pimList.SetItems(nil)
 						m.pimList.Title = "Eligible PIM roles â " + item.tenant.Name
-						return m, tea.Batch(m.spinner.Tick, loadPIMCmd(m.listPIM, item.tenant))
+						return m, loadPIMCmd(m.listPIM, item.tenant)
 					}
 				}
 			}
@@ -343,14 +346,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen == screenPIM {
 			m.pimLoading = false
 			m.pimErr = msg.err.Error()
-		}
-		return m, nil
-
-	case spinner.TickMsg:
-		if m.pimLoading {
-			var cmd tea.Cmd
-			m.spinner, cmd = m.spinner.Update(msg)
-			return m, cmd
 		}
 		return m, nil
 	}
@@ -405,13 +400,12 @@ func (m Model) confirmView() string {
 func (m Model) pimView() string {
 	switch {
 	case m.pimLoading:
-		return m.pimBox(confirmTitleStyle.Render("Eligible PIM roles â "+m.pimTenant) +
-			"\n\n" + m.spinner.View() + " Loading eligible rolesâ¦")
+		return m.pimBox(statusMsgStyle.Render("Loading eligible PIM roles for " + m.pimTenant.Name + "... (querying Azure, this can take a few seconds)"))
 	case m.pimErr != "":
 		return m.pimBox(statusMsgStyle.Render("Could not load PIM roles:") +
-			"\n" + m.pimErr + "\n\n" + confirmKeysStyle.Render("esc") + " back")
+			"\n" + m.pimErr + "\n\n" + confirmKeysStyle.Render("l") + " log in     " + confirmKeysStyle.Render("esc") + " back")
 	case len(m.pimList.Items()) == 0:
-		return m.pimBox("No eligible resource-role assignments for " + m.pimTenant + "." +
+		return m.pimBox("No eligible resource-role assignments for " + m.pimTenant.Name + "." +
 			"\n\n" + confirmKeysStyle.Render("esc") + " back")
 	}
 	return appStyle.Render(m.pimList.View())
