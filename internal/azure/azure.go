@@ -1,9 +1,11 @@
 package azure
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 // binary is the Azure CLI executable azsel drives.
@@ -94,4 +96,81 @@ func LoginServicePrincipal(tenantID, configDir, appID, certificate, secret strin
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	return run(cmd)
+}
+
+// SessionState reports whether the profile in configDir still has a usable
+// session for the given tenant. It asks az to acquire a token (which exercises
+// the refresh token) and reads its expiry; a lapsed session — az's AADSTS700082
+// / AADSTS70043, or never having logged in — makes az exit non-zero, reported
+// here as valid=false.
+//
+// tenantID matters: a profile can hold subscriptions from several tenants and
+// its active one may be a different tenant, so without --tenant this would check
+// the wrong session. An empty tenantID falls back to the active session.
+// Callers gate on Available first; any az failure is treated as "not signed in"
+// rather than surfaced, since that is what the caller shows.
+func SessionState(configDir, tenantID string) (valid bool, expiresOn string) {
+	args := []string{"account", "get-access-token"}
+	if strings.TrimSpace(tenantID) != "" {
+		args = append(args, "--tenant", tenantID)
+	}
+	args = append(args, "--query", "expiresOn", "--output", "tsv")
+	cmd := command(configDir, args...)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &bytes.Buffer{}
+	if err := run(cmd); err != nil {
+		return false, ""
+	}
+	return true, strings.TrimSpace(out.String())
+}
+
+// TenantToken acquires an ARM access token for a specific tenant, regardless of
+// which subscription is currently active. This matters because a profile's
+// active subscription may belong to a different tenant, and az rest would then
+// use that wrong-tenant token — which the PIM API rejects with a misleading
+// AadPremiumLicenseRequired. A failure here usually means the session for this
+// tenant has lapsed.
+func TenantToken(configDir, tenantID string) (string, error) {
+	cmd := command(configDir, "account", "get-access-token",
+		"--tenant", tenantID, "--resource", "https://management.azure.com",
+		"--query", "accessToken", "--output", "tsv", "--only-show-errors")
+	out, err := output(cmd)
+	if err != nil {
+		return "", fmt.Errorf("could not get a token for tenant %s (its session may have expired — run 'azsel login'): %w", tenantID, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// RestGET runs `az rest --method GET --url <url>` scoped to configDir and
+// returns the response body. Unlike the login helpers, which stream az's output
+// to stderr, this captures stdout — az writes the raw JSON body there — so
+// callers can parse it.
+//
+// When token is non-empty it is passed as an explicit Authorization header, so
+// the call uses that tenant's token rather than whatever subscription happens to
+// be active (az rest honors a supplied Authorization header). url is a single
+// argv token: exec runs no shell, so ?api-version=…&$filter=asTarget() reaches
+// az verbatim.
+func RestGET(configDir, url, token string) ([]byte, error) {
+	args := []string{"rest", "--method", "GET", "--url", url, "--only-show-errors"}
+	if token != "" {
+		args = append(args, "--headers", "Authorization=Bearer "+token)
+	}
+	return output(command(configDir, args...))
+}
+
+// output runs cmd capturing stdout, folding az's stderr into the error so
+// "run 'az login'" and AADSTS messages survive.
+func output(cmd *exec.Cmd) ([]byte, error) {
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if err := run(cmd); err != nil {
+		if msg := strings.TrimSpace(errb.String()); msg != "" {
+			return nil, fmt.Errorf("%w\n%s", err, msg)
+		}
+		return nil, err
+	}
+	return out.Bytes(), nil
 }

@@ -228,6 +228,161 @@ func TestLoginServicePrincipalScopesConfigDir(t *testing.T) {
 	}
 }
 
+func TestSessionStateValid(t *testing.T) {
+	stubRun(t, func(cmd *exec.Cmd) error {
+		_, _ = cmd.Stdout.Write([]byte("2026-09-21T18:00:00.000000\n"))
+		return nil
+	})
+	valid, exp := SessionState("/cfg", "TID")
+	if !valid {
+		t.Fatal("SessionState reported an invalid session for a token that was acquired")
+	}
+	if exp != "2026-09-21T18:00:00.000000" {
+		t.Errorf("expiresOn = %q, wanted the trimmed token expiry", exp)
+	}
+}
+
+func TestSessionStateExpired(t *testing.T) {
+	stubRun(t, func(*exec.Cmd) error { return errors.New("AADSTS700082: refresh token expired") })
+	if valid, _ := SessionState("/cfg", "TID"); valid {
+		t.Error("SessionState reported a valid session when az could not get a token")
+	}
+}
+
+func TestSessionStateChecksTheTenant(t *testing.T) {
+	got := stubRun(t, nil)
+	SessionState("/cfg/acme", "TID")
+	want := []string{"az", "account", "get-access-token", "--tenant", "TID", "--query", "expiresOn", "--output", "tsv"}
+	if !slices.Equal(got.cmd.Args, want) {
+		t.Errorf("args = %v, wanted the tenant-scoped check %v", got.cmd.Args, want)
+	}
+	if v, ok := envValue(got.cmd, "AZURE_CONFIG_DIR"); !ok || v != "/cfg/acme" {
+		t.Errorf("AZURE_CONFIG_DIR = %q (present=%v), wanted /cfg/acme", v, ok)
+	}
+}
+
+// An empty tenant id falls back to the active session (no --tenant).
+func TestSessionStateEmptyTenantUsesActive(t *testing.T) {
+	got := stubRun(t, nil)
+	SessionState("/cfg", "")
+	want := []string{"az", "account", "get-access-token", "--query", "expiresOn", "--output", "tsv"}
+	if !slices.Equal(got.cmd.Args, want) {
+		t.Errorf("args = %v, wanted no --tenant %v", got.cmd.Args, want)
+	}
+}
+
+func TestRestGETWithTokenAddsAuthHeader(t *testing.T) {
+	got := stubRun(t, nil)
+	if _, err := RestGET("/cfg", "https://example", "tok123"); err != nil {
+		t.Fatalf("RestGET: %v", err)
+	}
+	want := []string{"az", "rest", "--method", "GET", "--url", "https://example", "--only-show-errors", "--headers", "Authorization=Bearer tok123"}
+	if !slices.Equal(got.cmd.Args, want) {
+		t.Errorf("args = %v, wanted the explicit Authorization header %v", got.cmd.Args, want)
+	}
+}
+
+func TestTenantTokenArgumentsAndScope(t *testing.T) {
+	got := stubRun(t, func(cmd *exec.Cmd) error {
+		_, _ = cmd.Stdout.Write([]byte("the-token\n"))
+		return nil
+	})
+	tok, err := TenantToken("/cfg/acme", "TID")
+	if err != nil {
+		t.Fatalf("TenantToken: %v", err)
+	}
+	if tok != "the-token" {
+		t.Errorf("token = %q, wanted the trimmed token", tok)
+	}
+	want := []string{"az", "account", "get-access-token", "--tenant", "TID", "--resource", "https://management.azure.com", "--query", "accessToken", "--output", "tsv", "--only-show-errors"}
+	if !slices.Equal(got.cmd.Args, want) {
+		t.Errorf("args = %v, wanted %v", got.cmd.Args, want)
+	}
+	if v, _ := envValue(got.cmd, "AZURE_CONFIG_DIR"); v != "/cfg/acme" {
+		t.Errorf("AZURE_CONFIG_DIR = %q, wanted /cfg/acme", v)
+	}
+}
+
+func TestTenantTokenFailurePointsAtLogin(t *testing.T) {
+	stubRun(t, func(cmd *exec.Cmd) error {
+		_, _ = cmd.Stderr.Write([]byte("AADSTS700082: expired"))
+		return errors.New("exit status 1")
+	})
+	if _, err := TenantToken("/cfg", "TID"); err == nil || !strings.Contains(err.Error(), "azsel login") {
+		t.Errorf("error = %v, wanted it to point at 'azsel login'", err)
+	}
+}
+
+func TestRestGETArguments(t *testing.T) {
+	got := stubRun(t, nil)
+	url := "https://management.azure.com/x?api-version=2020-10-01&$filter=asTarget()"
+	if _, err := RestGET("/cfg", url, ""); err != nil {
+		t.Fatalf("RestGET: %v", err)
+	}
+	want := []string{"az", "rest", "--method", "GET", "--url", url, "--only-show-errors"}
+	if !slices.Equal(got.cmd.Args, want) {
+		t.Errorf("args = %v, wanted %v", got.cmd.Args, want)
+	}
+}
+
+func TestRestGETScopesConfigDir(t *testing.T) {
+	got := stubRun(t, nil)
+	if _, err := RestGET("/cfg/acme", "https://example", ""); err != nil {
+		t.Fatalf("RestGET: %v", err)
+	}
+	if v, ok := envValue(got.cmd, "AZURE_CONFIG_DIR"); !ok || v != "/cfg/acme" {
+		t.Errorf("AZURE_CONFIG_DIR = %q (present=%v), wanted /cfg/acme", v, ok)
+	}
+}
+
+// The body az writes to stdout is what RestGET must return — not a stream to
+// os.Stderr like the login helpers. Breaking the capture wiring fails this.
+func TestRestGETCapturesStdout(t *testing.T) {
+	body := `{"value":[]}`
+	stubRun(t, func(cmd *exec.Cmd) error {
+		_, _ = cmd.Stdout.Write([]byte(body))
+		return nil
+	})
+	got, err := RestGET("/cfg", "https://example", "")
+	if err != nil {
+		t.Fatalf("RestGET: %v", err)
+	}
+	if string(got) != body {
+		t.Errorf("body = %q, wanted %q", got, body)
+	}
+}
+
+// az's stderr carries the actionable message ("run 'az login'", AADSTS…), so it
+// must survive into the returned error, which must still wrap the run failure.
+func TestRestGETSurfacesStderr(t *testing.T) {
+	sentinel := errors.New("exit status 1")
+	stubRun(t, func(cmd *exec.Cmd) error {
+		_, _ = cmd.Stderr.Write([]byte("ERROR: Please run 'az login' to setup account."))
+		return sentinel
+	})
+	_, err := RestGET("/cfg", "https://example", "")
+	if err == nil {
+		t.Fatal("RestGET returned nil on failure")
+	}
+	if !errors.Is(err, sentinel) {
+		t.Errorf("error = %v, wanted it to wrap the run failure", err)
+	}
+	if !strings.Contains(err.Error(), "az login") {
+		t.Errorf("error = %q, wanted az's stderr surfaced", err)
+	}
+}
+
+// Non-interactive: a REST call must not connect stdin.
+func TestRestGETNoStdin(t *testing.T) {
+	got := stubRun(t, nil)
+	if _, err := RestGET("/cfg", "https://example", ""); err != nil {
+		t.Fatalf("RestGET: %v", err)
+	}
+	if got.cmd.Stdin != nil {
+		t.Error("stdin connected for a non-interactive REST call; should be nil")
+	}
+}
+
 // A secret starting with '-' must be one token joined with '=', or az's
 // argparse would read it as a flag and the login would fail.
 func TestLoginServicePrincipalSecretStartingWithDash(t *testing.T) {

@@ -33,6 +33,8 @@ func init() {
 	rootCmd.AddCommand(newRemoveCmd())
 	rootCmd.AddCommand(newInitCmd())
 	rootCmd.AddCommand(newDefaultCmd())
+	rootCmd.AddCommand(newPIMCmd())
+	rootCmd.AddCommand(newLoginCmd())
 }
 
 func Execute() error {

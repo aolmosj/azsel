@@ -36,6 +36,7 @@ func newUseCmd() *cobra.Command {
 				return err
 			}
 			fmt.Fprintf(os.Stderr, "Switched to tenant %q\n", tenant.Name)
+			warnIfExpired(tenant)
 			return nil
 		},
 	}

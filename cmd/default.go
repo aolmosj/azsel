@@ -68,6 +68,9 @@ func runDefaultSet(cfg *config.Config, name string) error {
 		fmt.Fprintln(os.Stderr, "New shells will start on this tenant. Open one to try it,")
 		fmt.Fprintln(os.Stderr, "or run 'azsel use "+res.Tenant+"' to switch this shell now.")
 	}
+	if t := cfg.FindTenant(res.Tenant); t != nil {
+		warnIfExpired(t)
+	}
 	return nil
 }
 
