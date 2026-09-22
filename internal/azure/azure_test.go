@@ -261,10 +261,52 @@ func TestSessionStateArguments(t *testing.T) {
 	}
 }
 
+func TestRestGETWithTokenAddsAuthHeader(t *testing.T) {
+	got := stubRun(t, nil)
+	if _, err := RestGET("/cfg", "https://example", "tok123"); err != nil {
+		t.Fatalf("RestGET: %v", err)
+	}
+	want := []string{"az", "rest", "--method", "GET", "--url", "https://example", "--only-show-errors", "--headers", "Authorization=Bearer tok123"}
+	if !slices.Equal(got.cmd.Args, want) {
+		t.Errorf("args = %v, wanted the explicit Authorization header %v", got.cmd.Args, want)
+	}
+}
+
+func TestTenantTokenArgumentsAndScope(t *testing.T) {
+	got := stubRun(t, func(cmd *exec.Cmd) error {
+		_, _ = cmd.Stdout.Write([]byte("the-token\n"))
+		return nil
+	})
+	tok, err := TenantToken("/cfg/acme", "TID")
+	if err != nil {
+		t.Fatalf("TenantToken: %v", err)
+	}
+	if tok != "the-token" {
+		t.Errorf("token = %q, wanted the trimmed token", tok)
+	}
+	want := []string{"az", "account", "get-access-token", "--tenant", "TID", "--resource", "https://management.azure.com", "--query", "accessToken", "--output", "tsv", "--only-show-errors"}
+	if !slices.Equal(got.cmd.Args, want) {
+		t.Errorf("args = %v, wanted %v", got.cmd.Args, want)
+	}
+	if v, _ := envValue(got.cmd, "AZURE_CONFIG_DIR"); v != "/cfg/acme" {
+		t.Errorf("AZURE_CONFIG_DIR = %q, wanted /cfg/acme", v)
+	}
+}
+
+func TestTenantTokenFailurePointsAtLogin(t *testing.T) {
+	stubRun(t, func(cmd *exec.Cmd) error {
+		_, _ = cmd.Stderr.Write([]byte("AADSTS700082: expired"))
+		return errors.New("exit status 1")
+	})
+	if _, err := TenantToken("/cfg", "TID"); err == nil || !strings.Contains(err.Error(), "azsel login") {
+		t.Errorf("error = %v, wanted it to point at 'azsel login'", err)
+	}
+}
+
 func TestRestGETArguments(t *testing.T) {
 	got := stubRun(t, nil)
 	url := "https://management.azure.com/x?api-version=2020-10-01&$filter=asTarget()"
-	if _, err := RestGET("/cfg", url); err != nil {
+	if _, err := RestGET("/cfg", url, ""); err != nil {
 		t.Fatalf("RestGET: %v", err)
 	}
 	want := []string{"az", "rest", "--method", "GET", "--url", url, "--only-show-errors"}
@@ -275,7 +317,7 @@ func TestRestGETArguments(t *testing.T) {
 
 func TestRestGETScopesConfigDir(t *testing.T) {
 	got := stubRun(t, nil)
-	if _, err := RestGET("/cfg/acme", "https://example"); err != nil {
+	if _, err := RestGET("/cfg/acme", "https://example", ""); err != nil {
 		t.Fatalf("RestGET: %v", err)
 	}
 	if v, ok := envValue(got.cmd, "AZURE_CONFIG_DIR"); !ok || v != "/cfg/acme" {
@@ -291,7 +333,7 @@ func TestRestGETCapturesStdout(t *testing.T) {
 		_, _ = cmd.Stdout.Write([]byte(body))
 		return nil
 	})
-	got, err := RestGET("/cfg", "https://example")
+	got, err := RestGET("/cfg", "https://example", "")
 	if err != nil {
 		t.Fatalf("RestGET: %v", err)
 	}
@@ -308,7 +350,7 @@ func TestRestGETSurfacesStderr(t *testing.T) {
 		_, _ = cmd.Stderr.Write([]byte("ERROR: Please run 'az login' to setup account."))
 		return sentinel
 	})
-	_, err := RestGET("/cfg", "https://example")
+	_, err := RestGET("/cfg", "https://example", "")
 	if err == nil {
 		t.Fatal("RestGET returned nil on failure")
 	}
@@ -323,7 +365,7 @@ func TestRestGETSurfacesStderr(t *testing.T) {
 // Non-interactive: a REST call must not connect stdin.
 func TestRestGETNoStdin(t *testing.T) {
 	got := stubRun(t, nil)
-	if _, err := RestGET("/cfg", "https://example"); err != nil {
+	if _, err := RestGET("/cfg", "https://example", ""); err != nil {
 		t.Fatalf("RestGET: %v", err)
 	}
 	if got.cmd.Stdin != nil {

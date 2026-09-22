@@ -115,26 +115,52 @@ func SessionState(configDir string) (valid bool, expiresOn string) {
 	return true, strings.TrimSpace(out.String())
 }
 
+// TenantToken acquires an ARM access token for a specific tenant, regardless of
+// which subscription is currently active. This matters because a profile's
+// active subscription may belong to a different tenant, and az rest would then
+// use that wrong-tenant token — which the PIM API rejects with a misleading
+// AadPremiumLicenseRequired. A failure here usually means the session for this
+// tenant has lapsed.
+func TenantToken(configDir, tenantID string) (string, error) {
+	cmd := command(configDir, "account", "get-access-token",
+		"--tenant", tenantID, "--resource", "https://management.azure.com",
+		"--query", "accessToken", "--output", "tsv", "--only-show-errors")
+	out, err := output(cmd)
+	if err != nil {
+		return "", fmt.Errorf("could not get a token for tenant %s (its session may have expired — run 'azsel login'): %w", tenantID, err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // RestGET runs `az rest --method GET --url <url>` scoped to configDir and
 // returns the response body. Unlike the login helpers, which stream az's output
 // to stderr, this captures stdout — az writes the raw JSON body there — so
-// callers can parse it. az's own diagnostics on stderr are folded into the
-// returned error, because "run 'az login'" and AADSTS messages are exactly what
-// a caller needs to surface.
+// callers can parse it.
 //
-// --only-show-errors keeps az's warnings (upgrade notices, preview banners) out
-// of the captured stderr. url is a single argv token: exec runs no shell, so a
-// query string like ?api-version=…&$filter=asTarget() reaches az verbatim.
-func RestGET(configDir, url string) ([]byte, error) {
-	cmd := command(configDir, "rest", "--method", "GET", "--url", url, "--only-show-errors")
+// When token is non-empty it is passed as an explicit Authorization header, so
+// the call uses that tenant's token rather than whatever subscription happens to
+// be active (az rest honors a supplied Authorization header). url is a single
+// argv token: exec runs no shell, so ?api-version=…&$filter=asTarget() reaches
+// az verbatim.
+func RestGET(configDir, url, token string) ([]byte, error) {
+	args := []string{"rest", "--method", "GET", "--url", url, "--only-show-errors"}
+	if token != "" {
+		args = append(args, "--headers", "Authorization=Bearer "+token)
+	}
+	return output(command(configDir, args...))
+}
+
+// output runs cmd capturing stdout, folding az's stderr into the error so
+// "run 'az login'" and AADSTS messages survive.
+func output(cmd *exec.Cmd) ([]byte, error) {
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &errb
 	if err := run(cmd); err != nil {
 		if msg := strings.TrimSpace(errb.String()); msg != "" {
-			return nil, fmt.Errorf("az rest failed: %w\n%s", err, msg)
+			return nil, fmt.Errorf("%w\n%s", err, msg)
 		}
-		return nil, fmt.Errorf("az rest failed: %w", err)
+		return nil, err
 	}
 	return out.Bytes(), nil
 }
