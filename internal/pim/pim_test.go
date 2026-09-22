@@ -9,34 +9,17 @@ import (
 	"time"
 )
 
-// stubRestGet swaps the Azure CLI seam for one test, routing by URL. fn must be
-// safe for concurrent use: Strategy 2 queries scopes in parallel.
-func stubRestGet(t *testing.T, fn func(url string) ([]byte, error)) {
+// stubPIM swaps the two Azure CLI seams for one test, restoring them after. The
+// get func answers both the subscriptions list and the per-scope query, routed
+// by URL.
+func stubPIM(t *testing.T,
+	token func(configDir, tenantID string) (string, error),
+	get func(configDir, url, token string) ([]byte, error),
+) {
 	t.Helper()
-	orig := restGet
-	restGet = func(_, url string) ([]byte, error) { return fn(url) }
-	t.Cleanup(func() { restGet = orig })
-}
-
-func isMe(u string) bool            { return strings.Contains(u, "/v1.0/me?") }
-func isMyGroups(u string) bool      { return strings.Contains(u, "transitiveMemberOf") }
-func isScopeAndBelow(u string) bool { return strings.Contains(u, "atScopeAndBelow") }
-func isSubsList(u string) bool      { return strings.Contains(u, "/subscriptions?api-version") }
-func forSub(u, id string) bool      { return strings.Contains(u, "/subscriptions/"+id+"/") }
-
-func meBody(id string) []byte { return []byte(fmt.Sprintf(`{"id":%q}`, id)) }
-
-func groupsBody(ids ...string) []byte {
-	var b strings.Builder
-	b.WriteString(`{"value":[`)
-	for i, id := range ids {
-		if i > 0 {
-			b.WriteString(",")
-		}
-		fmt.Fprintf(&b, `{"id":%q}`, id)
-	}
-	b.WriteString(`]}`)
-	return []byte(b.String())
+	ot, og := tenantToken, restGet
+	tenantToken, restGet = token, get
+	t.Cleanup(func() { tenantToken, restGet = ot, og })
 }
 
 func subsBody(ids ...string) []byte {
@@ -53,8 +36,7 @@ func subsBody(ids ...string) []byte {
 }
 
 type inst struct {
-	name, role, scopeName, scopeType, end string
-	pType, pName, pID                     string
+	name, role, scopeName, scopeType, end, pType, pName string
 }
 
 func instBody(items ...inst) []byte {
@@ -74,219 +56,78 @@ func instBody(items ...inst) []byte {
 		}
 		fmt.Fprintf(&b, `{"name":%q,"properties":{"status":"Provisioned","endDateTime":%s,`+
 			`"expandedProperties":{"scope":{"id":"/scope/%s","displayName":%q,"type":%q},`+
-			`"roleDefinition":{"displayName":%q},`+
-			`"principal":{"id":%q,"displayName":%q,"type":%q}}}}`,
-			it.name, end, it.name, it.scopeName, it.scopeType, it.role, it.pID, pName, pType)
+			`"roleDefinition":{"displayName":%q},"principal":{"displayName":%q,"type":%q}}}}`,
+			it.name, end, it.name, it.scopeName, it.scopeType, it.role, pName, pType)
 	}
 	b.WriteString(`]}`)
 	return []byte(b.String())
 }
 
-// Strategy 1: one atScopeAndBelow() query, filtered client-side to the caller
-// and the groups they belong to — no per-subscription fan-out.
-func TestStrategy1FiltersByPrincipalAndGroups(t *testing.T) {
+func isSubsList(url string) bool { return strings.Contains(url, "/subscriptions?api-version") }
+func forSub(url, id string) bool { return strings.Contains(url, "/subscriptions/"+id+"/") }
+
+// The subscriptions are enumerated with the tenant token (not az account list),
+// and each is queried with that same token via asTarget().
+func TestListEligibleQueriesWithTenantToken(t *testing.T) {
 	var (
-		mu   sync.Mutex
-		urls []string
+		mu       sync.Mutex
+		gotToken string
+		queried  int
 	)
-	stubRestGet(t, func(url string) ([]byte, error) {
-		mu.Lock()
-		urls = append(urls, url)
-		mu.Unlock()
-		switch {
-		case isMe(url):
-			return meBody("me-id"), nil
-		case isMyGroups(url):
-			return groupsBody("grp-1"), nil
-		case isScopeAndBelow(url):
-			return instBody(
-				inst{name: "a", role: "Owner", scopeName: "Sub", scopeType: "subscription", pType: "User", pName: "Me", pID: "me-id"},
-				inst{name: "b", role: "Reader", scopeName: "MG", scopeType: "managementgroup", pType: "Group", pName: "Team", pID: "grp-1"},
-				inst{name: "c", role: "Owner", scopeName: "Sub", scopeType: "subscription", pType: "User", pName: "Someone", pID: "other-user"},
-				inst{name: "d", role: "Owner", scopeName: "MG", scopeType: "managementgroup", pType: "Group", pName: "OtherTeam", pID: "grp-99"},
-			), nil
-		}
-		return nil, fmt.Errorf("unexpected url %q", url)
-	})
+	stubPIM(t,
+		func(_, tenantID string) (string, error) { return "tok-" + tenantID, nil },
+		func(_, url, token string) ([]byte, error) {
+			mu.Lock()
+			gotToken = token
+			if !isSubsList(url) {
+				queried++
+			}
+			mu.Unlock()
+			switch {
+			case isSubsList(url):
+				return subsBody("s1", "s2"), nil
+			case forSub(url, "s1"):
+				return instBody(inst{name: "a", role: "Owner", scopeName: "Sub1", scopeType: "subscription"}), nil
+			case forSub(url, "s2"):
+				return instBody(inst{name: "b", role: "Reader", scopeName: "Sub2", scopeType: "subscription"}), nil
+			}
+			return nil, fmt.Errorf("unexpected url %q", url)
+		},
+	)
 
 	got, err := ListEligible("/cfg", "TID")
 	if err != nil {
 		t.Fatalf("ListEligible: %v", err)
 	}
-	// Only the caller's own (a) and their group's (b) survive; c (another user)
-	// and d (a group they are not in) are dropped.
 	if len(got) != 2 {
-		t.Fatalf("got %d rows, wanted 2 (mine + my group): %+v", len(got), got)
+		t.Fatalf("got %d rows, wanted 2: %+v", len(got), got)
 	}
-	if got[0].RoleName != "Reader" || got[0].ViaGroup() != "Team" {
-		t.Errorf("row0 = %+v, wanted the group-inherited Reader", got[0])
+	if gotToken != "tok-TID" {
+		t.Errorf("queried with token %q, wanted the tenant token tok-TID", gotToken)
 	}
-	if got[1].RoleName != "Owner" || got[1].ViaGroup() != "" {
-		t.Errorf("row1 = %+v, wanted the direct Owner", got[1])
-	}
-	// Strategy 1 must not fan out over subscriptions.
-	mu.Lock()
-	defer mu.Unlock()
-	for _, u := range urls {
-		if isSubsList(u) || strings.Contains(u, "asTarget()") {
-			t.Errorf("Strategy 1 made a per-subscription call: %q", u)
-		}
+	if queried != 2 {
+		t.Errorf("queried %d scopes, wanted 2 (one per subscription)", queried)
 	}
 }
 
-// Without a Graph identity (e.g. a service-principal profile), Strategy 1 cannot
-// filter, so it falls back to the per-subscription path.
-func TestFallbackWhenNoGraphIdentity(t *testing.T) {
-	stubRestGet(t, func(url string) ([]byte, error) {
-		switch {
-		case isMe(url):
-			return nil, errors.New("Insufficient privileges to complete the operation")
-		case isSubsList(url):
-			return subsBody("sub-1"), nil
-		case forSub(url, "sub-1"):
-			return instBody(inst{name: "s1", role: "Reader", scopeName: "App1", scopeType: "subscription"}), nil
-		}
-		return []byte(`{"value":[]}`), nil
-	})
-	got, err := ListEligible("/cfg", "TID")
-	if err != nil {
-		t.Fatalf("ListEligible: %v", err)
-	}
-	if len(got) != 1 || got[0].RoleName != "Reader" {
-		t.Errorf("got %+v, wanted the Strategy 2 Reader row", got)
-	}
-}
-
-// No tenant id means Strategy 1 cannot address the root MG; it falls back.
-func TestFallbackWhenNoTenantID(t *testing.T) {
-	called := false
-	stubRestGet(t, func(url string) ([]byte, error) {
-		if isMe(url) || isScopeAndBelow(url) {
-			called = true
-		}
-		switch {
-		case isSubsList(url):
-			return subsBody("sub-1"), nil
-		case forSub(url, "sub-1"):
-			return instBody(inst{name: "s1", role: "Owner", scopeName: "App1", scopeType: "subscription"}), nil
-		}
-		return []byte(`{"value":[]}`), nil
-	})
-	got, err := ListEligible("/cfg", "")
-	if err != nil {
-		t.Fatalf("ListEligible: %v", err)
-	}
-	if len(got) != 1 {
-		t.Fatalf("got %d rows, wanted 1 from Strategy 2", len(got))
-	}
-	if called {
-		t.Error("Strategy 1 was attempted despite an empty tenant ID")
-	}
-}
-
-// atScopeAndBelow deduplicates by instance id like the per-subscription path.
-func TestStrategy1Dedupes(t *testing.T) {
-	stubRestGet(t, func(url string) ([]byte, error) {
-		switch {
-		case isMe(url):
-			return meBody("me-id"), nil
-		case isMyGroups(url):
-			return groupsBody(), nil
-		case isScopeAndBelow(url):
-			return instBody(
-				inst{name: "dup", role: "Owner", scopeName: "MG", scopeType: "managementgroup", pID: "me-id"},
-				inst{name: "dup", role: "Owner", scopeName: "MG", scopeType: "managementgroup", pID: "me-id"},
-			), nil
-		}
-		return nil, fmt.Errorf("unexpected url %q", url)
-	})
-	got, err := ListEligible("/cfg", "TID")
-	if err != nil {
-		t.Fatalf("ListEligible: %v", err)
-	}
-	if len(got) != 1 {
-		t.Errorf("got %d rows, wanted 1 after dedup", len(got))
-	}
-}
-
-// If Strategy 1's query fails (here: throttled or unsupported at the root MG)
-// but the per-subscription path works, the fallback recovers the results
-// instead of leaving the user stuck.
-func TestStrategy1FailureFallsBackToStrategy2(t *testing.T) {
-	stubRestGet(t, func(url string) ([]byte, error) {
-		switch {
-		case isMe(url):
-			return meBody("me-id"), nil
-		case isMyGroups(url):
-			return groupsBody(), nil
-		case isScopeAndBelow(url):
-			return nil, errors.New(`Bad Request({"error":{"code":"AadPremiumLicenseRequired"}})`)
-		case isSubsList(url):
-			return subsBody("sub-1"), nil
-		case forSub(url, "sub-1"):
-			return instBody(inst{name: "s1", role: "Reader", scopeName: "App1", scopeType: "subscription"}), nil
-		}
-		return []byte(`{"value":[]}`), nil
-	})
-	got, err := ListEligible("/cfg", "TID")
-	if err != nil {
-		t.Fatalf("ListEligible: %v", err)
-	}
-	if len(got) != 1 || got[0].RoleName != "Reader" {
-		t.Errorf("got %+v, wanted the Strategy 2 Reader row after fallback", got)
-	}
-}
-
-// When Strategy 2 is reached and the very first (probe) scope is throttled, it
-// fails fast with a clear message rather than firing a call per subscription.
-func TestStrategy2ProbeFailsFast(t *testing.T) {
-	var (
-		mu   sync.Mutex
-		urls []string
+// A management-group eligibility seen through several subscriptions is
+// deduplicated by instance id; rows sort deterministically.
+func TestListEligibleDedupesAndSorts(t *testing.T) {
+	mg := inst{name: "mg1", role: "Owner", scopeName: "Root MG", scopeType: "managementgroup", pType: "Group", pName: "Team"}
+	stubPIM(t,
+		func(_, _ string) (string, error) { return "tok", nil },
+		func(_, url, _ string) ([]byte, error) {
+			switch {
+			case isSubsList(url):
+				return subsBody("s1", "s2"), nil
+			case forSub(url, "s1"):
+				return instBody(mg, inst{name: "x", role: "Reader", scopeName: "Sub1", scopeType: "subscription", end: "2027-01-02T03:04:05Z"}), nil
+			case forSub(url, "s2"):
+				return instBody(mg, inst{name: "y", role: "Contributor", scopeName: "Sub2", scopeType: "subscription"}), nil
+			}
+			return []byte(`{"value":[]}`), nil
+		},
 	)
-	stubRestGet(t, func(url string) ([]byte, error) {
-		mu.Lock()
-		urls = append(urls, url)
-		mu.Unlock()
-		switch {
-		case isMe(url):
-			return nil, errors.New("no graph") // force fallback
-		case isSubsList(url):
-			return subsBody("sub-1", "sub-2", "sub-3"), nil
-		}
-		// Every eligibility query throttles.
-		return nil, errors.New(`Bad Request({"error":{"code":"AadPremiumLicenseRequired"}})`)
-	})
-	_, err := ListEligible("/cfg", "TID")
-	if err == nil || !strings.Contains(err.Error(), "rate-limited") {
-		t.Fatalf("error = %v, wanted a clear rate-limit message", err)
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	for _, u := range urls {
-		if forSub(u, "sub-2") || forSub(u, "sub-3") {
-			t.Errorf("fanned out to %q despite the probe being throttled", u)
-		}
-	}
-}
-
-// The per-subscription path (reached via fallback) aggregates and dedupes the
-// same management-group eligibility seen through several subscriptions.
-func TestStrategy2AggregatesAndDedupes(t *testing.T) {
-	mg := inst{name: "mg1", role: "Owner", scopeName: "AOC root", scopeType: "managementgroup", pType: "Group", pName: "Delivery"}
-	stubRestGet(t, func(url string) ([]byte, error) {
-		switch {
-		case isMe(url):
-			return nil, errors.New("no graph") // force fallback
-		case isSubsList(url):
-			return subsBody("sub-1", "sub-2"), nil
-		case forSub(url, "sub-1"):
-			return instBody(mg, inst{name: "s1", role: "Reader", scopeName: "App1", scopeType: "subscription", end: "2027-01-02T03:04:05Z"}), nil
-		case forSub(url, "sub-2"):
-			return instBody(mg, inst{name: "s2", role: "Contributor", scopeName: "App2", scopeType: "subscription"}), nil
-		}
-		return []byte(`{"value":[]}`), nil
-	})
 	got, err := ListEligible("/cfg", "TID")
 	if err != nil {
 		t.Fatalf("ListEligible: %v", err)
@@ -294,7 +135,7 @@ func TestStrategy2AggregatesAndDedupes(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("got %d rows, wanted 3 (deduped): %+v", len(got), got)
 	}
-	if got[0].RoleName != "Owner" || got[0].ViaGroup() != "Delivery" {
+	if got[0].RoleName != "Owner" || got[0].ViaGroup() != "Team" {
 		t.Errorf("row0 = %+v, wanted the group-inherited MG Owner", got[0])
 	}
 	if got[2].End == nil || !got[2].End.Equal(time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)) {
@@ -302,86 +143,91 @@ func TestStrategy2AggregatesAndDedupes(t *testing.T) {
 	}
 }
 
-// A 403 on one subscription must not hide the eligibilities from the others.
-func TestStrategy2SkipsPerScopeErrors(t *testing.T) {
-	stubRestGet(t, func(url string) ([]byte, error) {
-		switch {
-		case isMe(url):
-			return nil, errors.New("no graph")
-		case isSubsList(url):
-			return subsBody("sub-1", "sub-2"), nil
-		case forSub(url, "sub-1"):
-			return nil, errors.New("403 forbidden")
-		case forSub(url, "sub-2"):
-			return instBody(inst{name: "s2", role: "Reader", scopeName: "App2", scopeType: "subscription"}), nil
-		}
-		return []byte(`{"value":[]}`), nil
-	})
+func TestListEligibleTokenError(t *testing.T) {
+	want := errors.New("session expired; run 'azsel login'")
+	stubPIM(t,
+		func(_, _ string) (string, error) { return "", want },
+		func(_, _, _ string) ([]byte, error) { t.Fatal("queried despite token failure"); return nil, nil },
+	)
+	if _, err := ListEligible("/cfg", "TID"); !errors.Is(err, want) {
+		t.Errorf("error = %v, wanted the token error", err)
+	}
+}
+
+func TestListEligibleSubscriptionsError(t *testing.T) {
+	want := errors.New("cannot list subscriptions")
+	stubPIM(t,
+		func(_, _ string) (string, error) { return "tok", nil },
+		func(_, url, _ string) ([]byte, error) {
+			if isSubsList(url) {
+				return nil, want
+			}
+			return nil, nil
+		},
+	)
+	if _, err := ListEligible("/cfg", "TID"); !errors.Is(err, want) {
+		t.Errorf("error = %v, wanted the subscriptions error", err)
+	}
+}
+
+func TestListEligibleNoSubscriptions(t *testing.T) {
+	queried := false
+	stubPIM(t,
+		func(_, _ string) (string, error) { return "tok", nil },
+		func(_, url, _ string) ([]byte, error) {
+			if isSubsList(url) {
+				return subsBody(), nil
+			}
+			queried = true
+			return nil, nil
+		},
+	)
+	got, err := ListEligible("/cfg", "TID")
+	if err != nil {
+		t.Fatalf("ListEligible: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("got %d rows, wanted 0", len(got))
+	}
+	if queried {
+		t.Error("queried a scope despite no subscriptions")
+	}
+}
+
+// A failure on one subscription must not hide the eligibilities from the others.
+func TestListEligibleSkipsPerScopeErrors(t *testing.T) {
+	stubPIM(t,
+		func(_, _ string) (string, error) { return "tok", nil },
+		func(_, url, _ string) ([]byte, error) {
+			switch {
+			case isSubsList(url):
+				return subsBody("s1", "s2"), nil
+			case forSub(url, "s1"):
+				return nil, errors.New("403 forbidden")
+			}
+			return instBody(inst{name: "b", role: "Reader", scopeName: "Sub2", scopeType: "subscription"}), nil
+		},
+	)
 	got, err := ListEligible("/cfg", "TID")
 	if err != nil {
 		t.Fatalf("ListEligible: %v", err)
 	}
 	if len(got) != 1 || got[0].RoleName != "Reader" {
-		t.Errorf("got %+v, wanted the single Reader row from sub-2", got)
+		t.Errorf("got %+v, wanted the single Reader row from s2", got)
 	}
 }
 
-// If every subscription throttles, the clear rate-limit message is surfaced.
-func TestStrategy2AllThrottled(t *testing.T) {
-	stubRestGet(t, func(url string) ([]byte, error) {
-		switch {
-		case isMe(url):
-			return nil, errors.New("no graph")
-		case isSubsList(url):
-			return subsBody("sub-1"), nil
-		}
-		return nil, errors.New(`Bad Request({"error":{"code":"AadPremiumLicenseRequired"}})`)
-	})
-	_, err := ListEligible("/cfg", "TID")
-	if err == nil || !strings.Contains(err.Error(), "rate-limited") {
-		t.Errorf("error = %v, wanted a clear rate-limit message", err)
+func TestListEligibleEmptyTenantID(t *testing.T) {
+	called := false
+	stubPIM(t,
+		func(_, _ string) (string, error) { called = true; return "", nil },
+		func(_, _, _ string) ([]byte, error) { return nil, nil },
+	)
+	_, err := ListEligible("/cfg", "  ")
+	if err == nil || !strings.Contains(err.Error(), "tenant ID") {
+		t.Errorf("error = %v, wanted it to name the missing tenant ID", err)
 	}
-}
-
-// Graph and ARM paginate; both nextLink conventions are followed.
-func TestStrategy1FollowsPagination(t *testing.T) {
-	stubRestGet(t, func(url string) ([]byte, error) {
-		switch {
-		case isMe(url):
-			return meBody("me-id"), nil
-		case isMyGroups(url) && !strings.Contains(url, "page2"):
-			return []byte(`{"value":[{"id":"grp-1"}],"@odata.nextLink":"https://graph.microsoft.com/page2"}`), nil
-		case strings.Contains(url, "graph.microsoft.com/page2"):
-			return []byte(`{"value":[{"id":"grp-2"}]}`), nil
-		case isScopeAndBelow(url) && !strings.Contains(url, "arm-page2"):
-			return []byte(`{"value":[{"name":"a","properties":{"status":"Provisioned","expandedProperties":{"scope":{"displayName":"S","type":"subscription"},"roleDefinition":{"displayName":"Owner"},"principal":{"id":"grp-2"}}}}],"nextLink":"https://management.azure.com/arm-page2"}`), nil
-		case strings.Contains(url, "arm-page2"):
-			return []byte(`{"value":[{"name":"b","properties":{"status":"Provisioned","expandedProperties":{"scope":{"displayName":"S2","type":"subscription"},"roleDefinition":{"displayName":"Reader"},"principal":{"id":"me-id"}}}}]}`), nil
-		}
-		return nil, fmt.Errorf("unexpected url %q", url)
-	})
-	got, err := ListEligible("/cfg", "TID")
-	if err != nil {
-		t.Fatalf("ListEligible: %v", err)
-	}
-	// "a" matches grp-2 (from the second Graph page); "b" matches me — both need
-	// pagination to be seen.
-	if len(got) != 2 {
-		t.Fatalf("got %d rows, wanted 2 across paginated pages: %+v", len(got), got)
-	}
-}
-
-func TestListEligibleMalformedSubscriptions(t *testing.T) {
-	stubRestGet(t, func(url string) ([]byte, error) {
-		if isMe(url) {
-			return nil, errors.New("no graph")
-		}
-		if isSubsList(url) {
-			return []byte("not json"), nil
-		}
-		return []byte(`{"value":[]}`), nil
-	})
-	if _, err := ListEligible("/cfg", "TID"); err == nil {
-		t.Error("ListEligible accepted malformed subscriptions JSON")
+	if called {
+		t.Error("acquired a token despite an empty tenant ID")
 	}
 }

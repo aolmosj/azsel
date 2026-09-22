@@ -49,10 +49,10 @@ This is read-only; it does not activate anything.`,
 			if err != nil {
 				return err
 			}
-			if err := requireSession(tenant); err != nil {
-				return err
-			}
 
+			// pim.ListEligible acquires a token for the tenant itself, which is
+			// the real session gate (and specific to this tenant, unlike the
+			// active-subscription session a general check would see).
 			rows, err := pim.ListEligible(tenant.ConfigDir, tenant.TenantID)
 			if err != nil {
 				return err

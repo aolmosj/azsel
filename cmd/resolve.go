@@ -27,17 +27,6 @@ func resolveTenant(cfg *config.Config, args []string) (*config.Tenant, error) {
 	return nil, fmt.Errorf("no tenant given and no default set; pass a name or run 'azsel default <name>'")
 }
 
-// requireSession fails with an actionable message when a tenant's login has
-// lapsed, so a command needing a valid session says so plainly (and points at
-// 'azsel login') rather than surfacing a raw az error later. Callers gate on
-// azure.Available first.
-func requireSession(t *config.Tenant) error {
-	if valid, _ := azure.SessionState(t.ConfigDir); !valid {
-		return fmt.Errorf("the session for tenant %q has expired; run 'azsel login %s'", t.Name, t.Name)
-	}
-	return nil
-}
-
 // warnIfExpired notes, without failing, that a tenant a command just switched to
 // or made default has a lapsed session — the point of doing so is to use it, and
 // az would fail until re-login. Best-effort: skipped when the Azure CLI is not
