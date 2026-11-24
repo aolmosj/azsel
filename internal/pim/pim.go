@@ -31,6 +31,11 @@ type Eligible struct {
 	Status    string
 	End       *time.Time // nil = permanent eligibility (no end date)
 
+	// ActiveUntil is set when this eligibility is currently activated (a PIM
+	// "Activated" assignment exists for the same role and scope) and names when
+	// that activation expires; nil when the role is not currently active.
+	ActiveUntil *time.Time
+
 	// The principal the eligibility is assigned to. When PrincipalType is
 	// "Group" the eligibility is inherited through membership of that group
 	// (PrincipalName), which is what the user activates through; otherwise it is
@@ -114,10 +119,11 @@ func ListEligible(configDir, tenantID string) ([]Eligible, error) {
 	}
 
 	var (
-		mu      sync.Mutex
-		byName  = make(map[string]eligibleInstance)
-		anyOK   bool
-		lastErr error
+		mu       sync.Mutex
+		byName   = make(map[string]eligibleInstance)
+		activeBy = make(map[string]time.Time) // roleDefinitionId+scope -> active until
+		anyOK    bool
+		lastErr  error
 	)
 	sem := make(chan struct{}, scopeQueryConcurrency)
 	var wg sync.WaitGroup
@@ -129,6 +135,9 @@ func ListEligible(configDir, tenantID string) ([]Eligible, error) {
 			defer func() { <-sem }()
 
 			insts, err := fetchInstances(configDir, eligibleURL(scope), token)
+			// The active-assignments query is best-effort: a failure there leaves
+			// roles unmarked but must not break the eligibility listing.
+			active := fetchActive(configDir, scope, token)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -141,6 +150,9 @@ func ListEligible(configDir, tenantID string) ([]Eligible, error) {
 					byName[it.Name] = it
 				}
 			}
+			for k, until := range active {
+				activeBy[k] = until
+			}
 		}(scope)
 	}
 	wg.Wait()
@@ -151,7 +163,12 @@ func ListEligible(configDir, tenantID string) ([]Eligible, error) {
 		}
 		return nil, nil
 	}
-	return sortEligibles(byName), nil
+	return sortEligibles(byName, activeBy), nil
+}
+
+// activeKey correlates an active assignment with an eligibility by role and scope.
+func activeKey(roleDefinitionID, scope string) string {
+	return roleDefinitionID + "\x00" + scope
 }
 
 // eligibleResponse mirrors the ARM PIM payload; name is the instance GUID,
@@ -215,6 +232,55 @@ func tenantSubscriptions(configDir, token string) ([]string, error) {
 	return scopes, nil
 }
 
+// activeURL queries the caller's active role-assignment instances at one scope.
+func activeURL(scope string) string {
+	return "https://management.azure.com" + scope +
+		"/providers/Microsoft.Authorization/roleAssignmentScheduleInstances" +
+		"?api-version=2020-10-01&$filter=asTarget()"
+}
+
+type activeResponse struct {
+	Value []struct {
+		Properties struct {
+			RoleDefinitionID string  `json:"roleDefinitionId"`
+			Scope            string  `json:"scope"`
+			AssignmentType   string  `json:"assignmentType"`
+			EndDateTime      *string `json:"endDateTime"`
+		} `json:"properties"`
+	} `json:"value"`
+	NextLink string `json:"nextLink"`
+}
+
+// fetchActive returns, keyed by role+scope, the expiry of the caller's currently
+// *activated* PIM assignments at the scope — only assignmentType "Activated"
+// (temporary activations), not permanent "Assigned" access. Best-effort: any
+// error yields an empty map so the eligibility listing still works.
+func fetchActive(configDir, scope, token string) map[string]time.Time {
+	out := make(map[string]time.Time)
+	url := activeURL(scope)
+	for url != "" {
+		body, err := restGet(configDir, url, token)
+		if err != nil {
+			return out
+		}
+		var resp activeResponse
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return out
+		}
+		for _, a := range resp.Value {
+			p := a.Properties
+			if !strings.EqualFold(p.AssignmentType, "Activated") || p.EndDateTime == nil {
+				continue
+			}
+			if t, err := time.Parse(time.RFC3339, *p.EndDateTime); err == nil {
+				out[activeKey(p.RoleDefinitionID, p.Scope)] = t
+			}
+		}
+		url = resp.NextLink
+	}
+	return out
+}
+
 // fetchInstances follows ARM's nextLink pagination for one scope's query.
 func fetchInstances(configDir, url, token string) ([]eligibleInstance, error) {
 	var out []eligibleInstance
@@ -233,8 +299,9 @@ func fetchInstances(configDir, url, token string) ([]eligibleInstance, error) {
 	return out, nil
 }
 
-// sortEligibles maps deduplicated instances to Eligible and sorts them stably.
-func sortEligibles(byName map[string]eligibleInstance) []Eligible {
+// sortEligibles maps deduplicated instances to Eligible, marks the ones that are
+// currently activated (from activeBy, keyed by role+scope), and sorts stably.
+func sortEligibles(byName map[string]eligibleInstance, activeBy map[string]time.Time) []Eligible {
 	out := make([]Eligible, 0, len(byName))
 	for _, it := range byName {
 		p := it.Properties
@@ -261,6 +328,10 @@ func sortEligibles(byName map[string]eligibleInstance) []Eligible {
 			if t, err := time.Parse(time.RFC3339, *p.EndDateTime); err == nil {
 				e.End = &t
 			}
+		}
+		if until, ok := activeBy[activeKey(e.RoleDefinitionID, e.ScopeID)]; ok {
+			u := until
+			e.ActiveUntil = &u
 		}
 		out = append(out, e)
 	}

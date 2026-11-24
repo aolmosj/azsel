@@ -68,7 +68,7 @@ This is read-only; it does not activate anything.`,
 
 			// Table on stdout (like 'list'); stdout stays parseable.
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ROLE\tSCOPE\tTYPE\tVIA\tUNTIL")
+			fmt.Fprintln(w, "ROLE\tSCOPE\tTYPE\tVIA\tUNTIL\tACTIVE")
 			for _, r := range rows {
 				until := "permanent"
 				if r.End != nil {
@@ -78,7 +78,11 @@ This is read-only; it does not activate anything.`,
 				if via == "" {
 					via = "direct"
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", r.RoleName, r.ScopeName, r.ScopeType, via, until)
+				active := "-"
+				if r.ActiveUntil != nil {
+					active = "until " + r.ActiveUntil.Format("2006-01-02 15:04")
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.RoleName, r.ScopeName, r.ScopeType, via, until, active)
 			}
 			return w.Flush()
 		},
