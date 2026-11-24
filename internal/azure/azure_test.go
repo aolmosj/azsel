@@ -287,14 +287,14 @@ func TestTenantTokenArgumentsAndScope(t *testing.T) {
 		_, _ = cmd.Stdout.Write([]byte("the-token\n"))
 		return nil
 	})
-	tok, err := TenantToken("/cfg/acme", "TID")
+	tok, err := TenantToken("/cfg/acme", "TID", "https://graph.microsoft.com")
 	if err != nil {
 		t.Fatalf("TenantToken: %v", err)
 	}
 	if tok != "the-token" {
 		t.Errorf("token = %q, wanted the trimmed token", tok)
 	}
-	want := []string{"az", "account", "get-access-token", "--tenant", "TID", "--resource", "https://management.azure.com", "--query", "accessToken", "--output", "tsv", "--only-show-errors"}
+	want := []string{"az", "account", "get-access-token", "--tenant", "TID", "--resource", "https://graph.microsoft.com", "--query", "accessToken", "--output", "tsv", "--only-show-errors"}
 	if !slices.Equal(got.cmd.Args, want) {
 		t.Errorf("args = %v, wanted %v", got.cmd.Args, want)
 	}
@@ -308,8 +308,24 @@ func TestTenantTokenFailurePointsAtLogin(t *testing.T) {
 		_, _ = cmd.Stderr.Write([]byte("AADSTS700082: expired"))
 		return errors.New("exit status 1")
 	})
-	if _, err := TenantToken("/cfg", "TID"); err == nil || !strings.Contains(err.Error(), "azsel login") {
+	if _, err := TenantToken("/cfg", "TID", "https://management.azure.com"); err == nil || !strings.Contains(err.Error(), "azsel login") {
 		t.Errorf("error = %v, wanted it to point at 'azsel login'", err)
+	}
+}
+
+func TestRestPUTBuildsBodyAndHeaders(t *testing.T) {
+	got := stubRun(t, nil)
+	if _, err := RestPUT("/cfg/acme", "https://example/req", "tok123", `{"properties":{}}`); err != nil {
+		t.Fatalf("RestPUT: %v", err)
+	}
+	want := []string{"az", "rest", "--method", "PUT", "--url", "https://example/req",
+		"--headers", "Content-Type=application/json", "Authorization=Bearer tok123",
+		"--body", `{"properties":{}}`, "--only-show-errors"}
+	if !slices.Equal(got.cmd.Args, want) {
+		t.Errorf("args = %v, wanted %v", got.cmd.Args, want)
+	}
+	if v, _ := envValue(got.cmd, "AZURE_CONFIG_DIR"); v != "/cfg/acme" {
+		t.Errorf("AZURE_CONFIG_DIR = %q, wanted /cfg/acme", v)
 	}
 }
 
