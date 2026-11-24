@@ -74,6 +74,9 @@ func (p pimItem) Description() string {
 	if via := p.e.ViaGroup(); via != "" {
 		d += " · via " + via
 	}
+	if p.e.ActiveUntil != nil {
+		d += activeStyle.Render(" · ACTIVE until " + p.e.ActiveUntil.Format("2006-01-02 15:04"))
+	}
 	return d
 }
 

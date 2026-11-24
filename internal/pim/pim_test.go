@@ -66,6 +66,8 @@ func instBody(items ...inst) []byte {
 
 func isSubsList(url string) bool { return strings.Contains(url, "/subscriptions?api-version") }
 func forSub(url, id string) bool { return strings.Contains(url, "/subscriptions/"+id+"/") }
+func isElig(url string) bool     { return strings.Contains(url, "roleEligibilityScheduleInstances") }
+func isActive(url string) bool   { return strings.Contains(url, "roleAssignmentScheduleInstances") }
 
 // The subscriptions are enumerated with the tenant token (not az account list),
 // and each is queried with that same token via asTarget().
@@ -80,13 +82,15 @@ func TestListEligibleQueriesWithTenantToken(t *testing.T) {
 		func(_, url, token string) ([]byte, error) {
 			mu.Lock()
 			gotToken = token
-			if !isSubsList(url) {
+			if isElig(url) {
 				queried++
 			}
 			mu.Unlock()
 			switch {
 			case isSubsList(url):
 				return subsBody("s1", "s2"), nil
+			case isActive(url):
+				return []byte(`{"value":[]}`), nil
 			case forSub(url, "s1"):
 				return instBody(inst{name: "a", role: "Owner", scopeName: "Sub1", scopeType: "subscription"}), nil
 			case forSub(url, "s2"):
@@ -443,5 +447,55 @@ func TestActivateMissingIdentifiers(t *testing.T) {
 	}
 	if called {
 		t.Error("acquired a token despite missing identifiers")
+	}
+}
+
+// An eligibility whose role+scope has a currently-"Activated" assignment is
+// marked ActiveUntil; a permanent "Assigned" one, or a non-matching role, is not.
+func TestListEligibleMarksActivated(t *testing.T) {
+	const eligRows = `{"value":[
+      {"name":"a","properties":{"status":"Provisioned","roleDefinitionId":"rd-active","scope":"/scope/x",
+        "expandedProperties":{"scope":{"id":"/scope/x","displayName":"X","type":"subscription"},"roleDefinition":{"displayName":"Owner"},"principal":{"displayName":"Me","type":"User"}}}},
+      {"name":"b","properties":{"status":"Provisioned","roleDefinitionId":"rd-idle","scope":"/scope/y",
+        "expandedProperties":{"scope":{"id":"/scope/y","displayName":"Y","type":"subscription"},"roleDefinition":{"displayName":"Reader"},"principal":{"displayName":"Me","type":"User"}}}}]}`
+	const activeRows = `{"value":[
+      {"properties":{"roleDefinitionId":"rd-active","scope":"/scope/x","assignmentType":"Activated","endDateTime":"2027-01-02T03:04:05Z"}},
+      {"properties":{"roleDefinitionId":"rd-idle","scope":"/scope/y","assignmentType":"Assigned","endDateTime":null}}]}`
+
+	stubPIM(t,
+		func(_, _, _ string) (string, error) { return "tok", nil },
+		func(_, url, _ string) ([]byte, error) {
+			switch {
+			case isSubsList(url):
+				return subsBody("s1"), nil
+			case isActive(url):
+				return []byte(activeRows), nil
+			case isElig(url):
+				return []byte(eligRows), nil
+			}
+			return []byte(`{"value":[]}`), nil
+		},
+	)
+	got, err := ListEligible("/cfg", "TID")
+	if err != nil {
+		t.Fatalf("ListEligible: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d rows, wanted 2", len(got))
+	}
+	var owner, reader Eligible
+	for _, e := range got {
+		switch e.RoleName {
+		case "Owner":
+			owner = e
+		case "Reader":
+			reader = e
+		}
+	}
+	if owner.ActiveUntil == nil || !owner.ActiveUntil.Equal(time.Date(2027, 1, 2, 3, 4, 5, 0, time.UTC)) {
+		t.Errorf("Owner ActiveUntil = %v, wanted 2027-01-02T03:04:05Z (it is activated)", owner.ActiveUntil)
+	}
+	if reader.ActiveUntil != nil {
+		t.Errorf("Reader ActiveUntil = %v, wanted nil (permanent Assigned, not activated)", reader.ActiveUntil)
 	}
 }
