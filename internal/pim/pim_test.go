@@ -499,3 +499,53 @@ func TestListEligibleMarksActivated(t *testing.T) {
 		t.Errorf("Reader ActiveUntil = %v, wanted nil (permanent Assigned, not activated)", reader.ActiveUntil)
 	}
 }
+
+// Regression (the real consorci-aoc shape): a management-group eligibility is
+// discovered through a subscription, so its roleDefinitionId is subscription-
+// prefixed and its scope is the MG. The "Activated" instance exists only at the
+// MG scope — a subscription query reports it merely as inherited "Assigned" —
+// and carries the tenant-level roleDefinitionId. It must still be matched, which
+// needs both the MG-scope active query and GUID-based keying.
+func TestListEligibleMarksActivatedAtManagementGroup(t *testing.T) {
+	const mgScope = "/providers/Microsoft.Management/managementGroups/aocroot"
+	// Eligibility: MG scope, roleDefinitionId prefixed by the subscription.
+	eligRows := `{"value":[{"name":"kv","properties":{"status":"Provisioned",` +
+		`"roleDefinitionId":"/subscriptions/sub1/providers/Microsoft.Authorization/roleDefinitions/00482a5a",` +
+		`"scope":"` + mgScope + `",` +
+		`"expandedProperties":{"scope":{"id":"` + mgScope + `","displayName":"AOC root","type":"managementgroup"},` +
+		`"roleDefinition":{"displayName":"Key Vault Administrator"},"principal":{"displayName":"Team","type":"Group"}}}}]}`
+	// A subscription active query returns the MG role only as inherited "Assigned".
+	const subActive = `{"value":[{"properties":{"roleDefinitionId":"/providers/Microsoft.Authorization/roleDefinitions/00482a5a",` +
+		`"scope":"` + mgScope + `","assignmentType":"Assigned","endDateTime":null}}]}`
+	// The MG-scope active query returns the temporary "Activated" instance, with
+	// the tenant-level roleDefinitionId (no subscription prefix).
+	const mgActive = `{"value":[{"properties":{"roleDefinitionId":"/providers/Microsoft.Authorization/roleDefinitions/00482a5a",` +
+		`"scope":"` + mgScope + `","assignmentType":"Activated","endDateTime":"2026-11-24T17:31:24Z"}}]}`
+
+	stubPIM(t,
+		func(_, _, _ string) (string, error) { return "tok", nil },
+		func(_, url, _ string) ([]byte, error) {
+			switch {
+			case isSubsList(url):
+				return subsBody("sub1"), nil
+			case isActive(url) && strings.Contains(url, "managementGroups/aocroot"):
+				return []byte(mgActive), nil
+			case isActive(url):
+				return []byte(subActive), nil
+			case isElig(url):
+				return []byte(eligRows), nil
+			}
+			return []byte(`{"value":[]}`), nil
+		},
+	)
+	got, err := ListEligible("/cfg", "TID")
+	if err != nil {
+		t.Fatalf("ListEligible: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d rows, wanted 1: %+v", len(got), got)
+	}
+	if got[0].ActiveUntil == nil || !got[0].ActiveUntil.Equal(time.Date(2026, 11, 24, 17, 31, 24, 0, time.UTC)) {
+		t.Errorf("ActiveUntil = %v, wanted 2026-11-24T17:31:24Z (activated at the MG, GUID-matched)", got[0].ActiveUntil)
+	}
+}
