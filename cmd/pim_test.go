@@ -185,3 +185,80 @@ func TestPIMListUnknownTenant(t *testing.T) {
 		t.Errorf("error = %q, wanted a not-found error", err)
 	}
 }
+
+// An activatable eligibility row (carries the ids pim.Activate needs). Scope is a
+// management group so the activation PUT url has no "subscriptions" in it.
+const activatableRow = `{"value":[{"name":"inst-1","properties":{
+  "status":"Provisioned","endDateTime":null,
+  "scope":"/providers/Microsoft.Management/managementGroups/aocroot",
+  "roleDefinitionId":"/subscriptions/s/providers/Microsoft.Authorization/roleDefinitions/abc",
+  "roleEligibilityScheduleId":"/providers/Microsoft.Management/managementGroups/aocroot/providers/Microsoft.Authorization/roleEligibilitySchedules/xyz",
+  "expandedProperties":{"scope":{"id":"/providers/Microsoft.Management/managementGroups/aocroot","displayName":"AOC root","type":"managementgroup"},"roleDefinition":{"displayName":"Owner"},"principal":{"displayName":"Me","type":"User"}}}}]}`
+
+// fakeAzureActivate answers every call the activate path makes. Cases are
+// most-specific first (the eligibility URL also contains "subscriptions").
+const fakeAzureActivate = `case "$*" in
+  *get-access-token*) echo "tok" ;;
+  *roleAssignmentScheduleRequests*) echo '{"properties":{"status":"Provisioned"}}' ;;
+  *roleManagementPolicyAssignments*) echo '{"value":[{"properties":{"effectiveRules":[{"id":"x/Expiration_EndUser_Assignment","maximumDuration":"PT8H"}]}}]}' ;;
+  *roleEligibilityScheduleInstances*)
+    cat <<'JSON'
+` + activatableRow + `
+JSON
+    ;;
+  */v1.0/me*) echo '{"id":"my-id"}' ;;
+  *subscriptions*) echo '{"value":[{"subscriptionId":"sub-1"}]}' ;;
+  *) echo '{"value":[]}' ;;
+esac`
+
+func TestPIMActivateHappyPath(t *testing.T) {
+	listSandbox(t, "contoso")
+	fakeAzureCLI(t, fakeAzureActivate)
+	out := quiet(t)
+	if err := run(t, newPIMCmd(), "activate", "contoso", "--role", "Owner", "--yes"); err != nil {
+		t.Fatalf("pim activate: %v", err)
+	}
+	if got := out(); !strings.Contains(got, "Activated Owner") {
+		t.Errorf("expected an activation summary, got:\n%s", got)
+	}
+}
+
+func TestPIMActivateRequiresRole(t *testing.T) {
+	listSandbox(t, "contoso")
+	fakeAzureCLI(t, "true")
+	quiet(t)
+	err := run(t, newPIMCmd(), "activate", "contoso")
+	if err == nil || !strings.Contains(err.Error(), "--role") {
+		t.Errorf("error = %v, wanted it to require --role", err)
+	}
+}
+
+func TestPIMActivateNoMatch(t *testing.T) {
+	listSandbox(t, "contoso")
+	fakeAzureCLI(t, fakeAzureActivate)
+	quiet(t)
+	err := run(t, newPIMCmd(), "activate", "contoso", "--role", "Nonexistent", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "not eligible") {
+		t.Errorf("error = %v, wanted a not-eligible error", err)
+	}
+}
+
+func TestPIMActivateRequiresAzureCLI(t *testing.T) {
+	withoutAzureCLI(t)
+	quiet(t)
+	err := run(t, newPIMCmd(), "activate", "acme", "--role", "Owner")
+	if err == nil || !strings.Contains(err.Error(), "Azure CLI") {
+		t.Errorf("error = %v, wanted it to require the Azure CLI", err)
+	}
+}
+
+func TestConfirmed(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		want bool
+	}{{"y\n", true}, {"yes\n", true}, {"Y\n", true}, {"n\n", false}, {"\n", false}, {"", false}} {
+		if got := confirmed(strings.NewReader(c.in)); got != c.want {
+			t.Errorf("confirmed(%q) = %v, wanted %v", c.in, got, c.want)
+		}
+	}
+}
