@@ -849,3 +849,56 @@ func TestLoadPIMCmdMapsResults(t *testing.T) {
 		t.Errorf("cmd on error returned %T, wanted pimErrMsg", errCmd())
 	}
 }
+
+// "a" on a role opens a confirm; "y" records the activation (run post-exit), "N"
+// cancels back to the list.
+func TestPimActivateConfirmFlow(t *testing.T) {
+	m := NewModel(tenants(), "", "", nil, fakePIM(pimRows, nil))
+	m, _ = send(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m, _ = send(t, m, keyMsg("p"))
+	m, _ = send(t, m, pimLoadedMsg{rows: pimRows})
+
+	m, _ = send(t, m, keyMsg("a"))
+	if m.screen != screenActivateConfirm {
+		t.Fatalf("a did not open the activate confirm: screen = %v", m.screen)
+	}
+	if m.Activation() != nil {
+		t.Error("activation recorded before confirming")
+	}
+	if v := ansi.Strip(m.View()); !strings.Contains(v, "Activate Reader") {
+		t.Errorf("confirm view missing:\n%s", v)
+	}
+
+	m2, _ := send(t, m, keyMsg("y"))
+	act := m2.Activation()
+	if act == nil || act.Eligible.RoleName != "Reader" {
+		t.Fatalf("y did not record the activation for Reader: %+v", act)
+	}
+	if v := m2.View(); v != "" {
+		t.Errorf("View() = %q after y, wanted empty (quitting)", v)
+	}
+
+	m3, _ := send(t, m, keyMsg("n"))
+	if m3.screen != screenPIM {
+		t.Errorf("N did not return to the PIM list: screen = %v", m3.screen)
+	}
+	if m3.Activation() != nil {
+		t.Error("N recorded an activation")
+	}
+}
+
+// "a" while filtering the PIM list is search text, not activate.
+func TestPimActivateKeyIsTextWhileFiltering(t *testing.T) {
+	m := NewModel(tenants(), "", "", nil, fakePIM(pimRows, nil))
+	m, _ = send(t, m, tea.WindowSizeMsg{Width: 100, Height: 30})
+	m, _ = send(t, m, keyMsg("p"))
+	m, _ = send(t, m, pimLoadedMsg{rows: pimRows})
+	m, _ = send(t, m, keyMsg("/"))
+	if m.pimList.FilterState() != list.Filtering {
+		t.Fatalf("did not enter filtering")
+	}
+	m, _ = send(t, m, keyMsg("a"))
+	if m.screen == screenActivateConfirm {
+		t.Error("a opened the activate confirm while filtering")
+	}
+}
