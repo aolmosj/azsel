@@ -118,12 +118,35 @@ func ListEligible(configDir, tenantID string) ([]Eligible, error) {
 		return nil, nil
 	}
 
+	// Phase 1: eligibilities across the subscription scopes (which also surface
+	// management-group eligibilities each subscription inherits).
+	byName, anyOK, lastErr := fetchEligibleScopes(configDir, scopes, token)
+	if !anyOK {
+		if lastErr != nil {
+			return nil, lastErr
+		}
+		return nil, nil
+	}
+
+	// Phase 2: which of those eligibilities are currently activated. The active
+	// query must run at the exact scope each eligibility lives at — management
+	// groups included: a subscription query reports a management-group
+	// activation only as an inherited "Assigned", hiding the temporary
+	// "Activated" instance, which is returned solely at the MG scope itself.
+	activeBy := fetchActiveScopes(configDir, distinctScopes(byName), token)
+
+	return sortEligibles(byName, activeBy), nil
+}
+
+// fetchEligibleScopes queries eligibilities at each scope concurrently and
+// deduplicates by instance id. anyOK reports whether at least one scope
+// answered; lastErr carries a failure only relevant when none did.
+func fetchEligibleScopes(configDir string, scopes []string, token string) (map[string]eligibleInstance, bool, error) {
 	var (
-		mu       sync.Mutex
-		byName   = make(map[string]eligibleInstance)
-		activeBy = make(map[string]time.Time) // roleDefinitionId+scope -> active until
-		anyOK    bool
-		lastErr  error
+		mu      sync.Mutex
+		byName  = make(map[string]eligibleInstance)
+		anyOK   bool
+		lastErr error
 	)
 	sem := make(chan struct{}, scopeQueryConcurrency)
 	var wg sync.WaitGroup
@@ -133,11 +156,7 @@ func ListEligible(configDir, tenantID string) ([]Eligible, error) {
 		go func(scope string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-
 			insts, err := fetchInstances(configDir, eligibleURL(scope), token)
-			// The active-assignments query is best-effort: a failure there leaves
-			// roles unmarked but must not break the eligibility listing.
-			active := fetchActive(configDir, scope, token)
 			mu.Lock()
 			defer mu.Unlock()
 			if err != nil {
@@ -150,25 +169,85 @@ func ListEligible(configDir, tenantID string) ([]Eligible, error) {
 					byName[it.Name] = it
 				}
 			}
+		}(scope)
+	}
+	wg.Wait()
+	return byName, anyOK, lastErr
+}
+
+// fetchActiveScopes gathers, across the given scopes concurrently, the caller's
+// currently-activated assignments keyed by role+scope. Best-effort throughout:
+// a scope that fails contributes nothing and never breaks the listing.
+func fetchActiveScopes(configDir string, scopes []string, token string) map[string]time.Time {
+	var (
+		mu       sync.Mutex
+		activeBy = make(map[string]time.Time)
+	)
+	sem := make(chan struct{}, scopeQueryConcurrency)
+	var wg sync.WaitGroup
+	for _, scope := range scopes {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(scope string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			active := fetchActive(configDir, scope, token)
+			mu.Lock()
+			defer mu.Unlock()
 			for k, until := range active {
 				activeBy[k] = until
 			}
 		}(scope)
 	}
 	wg.Wait()
-
-	if !anyOK {
-		if lastErr != nil {
-			return nil, lastErr
-		}
-		return nil, nil
-	}
-	return sortEligibles(byName, activeBy), nil
+	return activeBy
 }
 
-// activeKey correlates an active assignment with an eligibility by role and scope.
+// distinctScopes is the set of scopes the eligibilities live at (subscriptions
+// and management groups) — exactly where an activation of any of them is found.
+func distinctScopes(byName map[string]eligibleInstance) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, it := range byName {
+		s := scopeOf(it)
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+// scopeOf is an eligibility's authoritative scope id: properties.scope, falling
+// back to the expanded scope id used for display.
+func scopeOf(it eligibleInstance) string {
+	if s := it.Properties.Scope; s != "" {
+		return s
+	}
+	return it.Properties.ExpandedProperties.Scope.ID
+}
+
+// activeKey correlates an active assignment with an eligibility by role and
+// scope. It keys on the role-definition GUID (the trailing path segment), not
+// the full id: the same role carries a different prefix on an eligibility (often
+// scoped to the subscription it was discovered through, e.g.
+// /subscriptions/<id>/.../roleDefinitions/<guid>) than on the activation
+// (tenant-level, /providers/.../roleDefinitions/<guid>), while the GUID is
+// stable across both.
 func activeKey(roleDefinitionID, scope string) string {
-	return roleDefinitionID + "\x00" + scope
+	return roleDefGUID(roleDefinitionID) + "\x00" + scope
+}
+
+// roleDefGUID is the trailing segment of a role-definition id.
+func roleDefGUID(id string) string {
+	if i := strings.LastIndex(id, "/"); i >= 0 {
+		return id[i+1:]
+	}
+	return id
 }
 
 // eligibleResponse mirrors the ARM PIM payload; name is the instance GUID,
@@ -305,12 +384,9 @@ func sortEligibles(byName map[string]eligibleInstance, activeBy map[string]time.
 	out := make([]Eligible, 0, len(byName))
 	for _, it := range byName {
 		p := it.Properties
-		// Prefer properties.scope (the authoritative scope id used for the
-		// activation request) and fall back to the expanded one for display.
-		scopeID := p.Scope
-		if scopeID == "" {
-			scopeID = p.ExpandedProperties.Scope.ID
-		}
+		// The authoritative scope id, used both to match activations and as the
+		// target of an activation request.
+		scopeID := scopeOf(it)
 		e := Eligible{
 			RoleName:         p.ExpandedProperties.RoleDefinition.DisplayName,
 			ScopeName:        p.ExpandedProperties.Scope.DisplayName,
