@@ -228,7 +228,7 @@ $ azsel
   *  fabrikam
      yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy
 
-  enter: activate  d: set default  /: filter  q: quit
+  enter: activate  d: set default  p: pim roles  l: login  /: filter  q: quit
 ```
 
 `*` marks the active tenant (this shell), `D` the default tenant (new shells). They can be different tenants, as above.
@@ -237,6 +237,8 @@ $ azsel
 - Press `/` to fuzzy-search by tenant name or ID
 - Press `Enter` to activate the selected tenant
 - Press `d` to make the selected tenant the default (asks first, since it repoints `~/.azure`)
+- Press `p` to list the selected tenant's eligible PIM roles (see [Privileged roles (PIM)](#privileged-roles-pim))
+- Press `l` to log in to the selected tenant (refreshes its session)
 - Press `q` or `Ctrl+C` to quit without changing anything
 
 ### Remove a tenant
@@ -253,6 +255,42 @@ Use `--force` / `-f` to skip the confirmation:
 $ azsel remove fabrikam -f
 Tenant "fabrikam" removed.
 ```
+
+### Privileged roles (PIM)
+
+If a tenant uses Azure [Privileged Identity Management](https://learn.microsoft.com/en-us/entra/id-governance/privileged-identity-management/pim-configure) for **Azure resource roles (RBAC)**, `azsel` can list the roles you are *eligible* to activate and activate one for you — without the Azure portal. This covers resource roles (`Microsoft.Authorization`), not Entra directory roles.
+
+Eligibilities are queried through the tenant's root management group with `asTarget()`, so you see every role you are eligible for regardless of which subscriptions are visible to you. Activations are discovered at each eligibility's own scope (subscriptions and management groups alike), so a role activated at a management group is still marked active.
+
+#### List eligible roles
+
+```bash
+$ azsel pim list contoso
+ROLE                     SCOPE      TYPE             VIA               UNTIL                 ACTIVE
+Key Vault Administrator  Platform   managementgroup  platform-admins   2027-09-08T08:56:06Z  until 2026-11-24 17:31
+Owner                    Identity   subscription     direct            2027-03-11T09:26:28Z  -
+```
+
+This is read-only. With no name the default tenant is used. `VIA` is the group that grants the eligibility (or `direct`); `UNTIL` is when the eligibility itself expires (`permanent` if it never does); `ACTIVE` shows the expiry of a current activation, or `-`. The table goes to stdout, so it stays parseable (`azsel pim list contoso 1>/tmp/out 2>/dev/null`).
+
+In the TUI, press `p` on the selected tenant to see the same roles; an active one is tagged `· ACTIVE until …` inline.
+
+#### Activate a role
+
+```bash
+$ azsel pim activate contoso --role "Key Vault Administrator"
+Activate "Key Vault Administrator" at "Platform" (managementgroup) for the policy's maximum duration? [y/N] y
+Activating "Key Vault Administrator" at "Platform"...
+Activated until 2026-11-24 17:31 (PT8H).
+```
+
+Activation uses `SelfActivate` for the **maximum duration the role's policy allows**, with the fixed justification `"Activated via azsel"`. Choose the role with `--role` (exactly as shown by `pim list`); if it is eligible at several scopes, disambiguate with `--scope`. `--yes` skips the confirmation prompt.
+
+If the role's policy requires MFA or a ticket at activation, Azure rejects the request and the ARM error is shown as-is. After activating, the `ACTIVE` marker can take a few seconds to appear (it reflects a fresh query).
+
+In the TUI, press `p`, select a role, then `a` and confirm with `y`.
+
+> PIM commands acquire a token scoped to the named tenant themselves, which is the real session gate. If the tenant's session has lapsed, log in first (`azsel use <name>` then `az login`, or press `l` in the TUI).
 
 ## Examples
 
@@ -418,6 +456,8 @@ unset AZSEL_DEBUG
 | `azsel default --clear` | Remove the default |
 | `azsel remove <name>` | Remove a tenant and its config directory |
 | `azsel remove <name> -f` | Remove without confirmation |
+| `azsel pim list [name]` | List eligible Azure resource-role (PIM) assignments for a tenant |
+| `azsel pim activate [name] --role <role>` | Activate an eligible PIM role (max policy duration; `--scope`, `--yes`) |
 | `azsel --version` | Show the current version |
 | `azsel completion <shell>` | Generate shell completions (bash/zsh/fish/powershell) |
 
