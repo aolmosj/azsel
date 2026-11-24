@@ -92,5 +92,17 @@ func runTUI(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Logging in to tenant %q...\n", lw.Name)
 		return azure.Login(lw.TenantID, lw.ConfigDir, false)
 	}
+	// The PIM activation (a write) runs after the TUI closes.
+	if act := m.Activation(); act != nil {
+		if err := azure.Available(); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "Activating %q at %q...\n", act.Eligible.RoleName, act.Eligible.ScopeName)
+		summary, err := pim.Activate(act.Tenant.ConfigDir, act.Tenant.TenantID, act.Eligible)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, summary)
+	}
 	return nil
 }

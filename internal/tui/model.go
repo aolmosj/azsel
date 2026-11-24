@@ -21,6 +21,7 @@ const (
 	screenConfirm
 	screenPIM
 	screenExpired
+	screenActivateConfirm
 )
 
 // expiredAction is what the user was attempting when the "session expired"
@@ -78,8 +79,20 @@ type Model struct {
 	pimErr     string
 	pimLoading bool
 
+	// activateEligible is the role the "a" prompt is about; activation records
+	// the user's confirmed intent, run post-exit by cmd/tui.go (az owns the
+	// terminal then, as with login).
+	activateEligible pim.Eligible
+	activation       *activation
+
 	width  int
 	height int
+}
+
+// activation is a confirmed PIM activation request, read post-exit.
+type activation struct {
+	Tenant   config.Tenant
+	Eligible pim.Eligible
 }
 
 func NewModel(tenants []config.Tenant, currentConfigDir, defaultName string, setDefault func(name string) (string, error), listPIM func(config.Tenant) ([]pim.Eligible, error)) Model {
@@ -110,6 +123,9 @@ func NewModel(tenants []config.Tenant, currentConfigDir, defaultName string, set
 	pl.Styles.FilterPrompt = lipgloss.NewStyle().Foreground(azureBlue)
 	pl.Styles.FilterCursor = lipgloss.NewStyle().Foreground(azureBlue)
 	pl.KeyMap.Quit = key.NewBinding(key.WithKeys("q", "esc"), key.WithHelp("esc", "back"))
+	pl.AdditionalShortHelpKeys = func() []key.Binding {
+		return []key.Binding{key.NewBinding(key.WithKeys("a"), key.WithHelp("a", "activate"))}
+	}
 
 	return Model{list: l, setDefault: setDefault, listPIM: listPIM, pimList: pl}
 }
@@ -226,6 +242,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
+		case screenActivateConfirm:
+			// Confirm before activating (a PIM write). y records the request and
+			// quits; cmd/tui.go runs it after the TUI closes.
+			switch msg.String() {
+			case "y", "Y":
+				m.activation = &activation{Tenant: m.pimTenant, Eligible: m.activateEligible}
+				m.quitting = true
+				return m, tea.Quit
+			default:
+				m.screen = screenPIM
+			}
+			return m, nil
+
 		case screenPIM:
 			// While loading or showing an error there is no list to drive, so
 			// esc/q just returns. esc works mid-load; the result-message guards
@@ -255,6 +284,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "esc", "q":
 					m.screen = screenList
 					return m, nil
+				case "a":
+					// Activate the selected role: confirm first (like set-default).
+					if it, ok := m.pimList.SelectedItem().(pimItem); ok {
+						m.activateEligible = it.e
+						m.screen = screenActivateConfirm
+						return m, nil
+					}
 				}
 			}
 			var cmd tea.Cmd
@@ -366,6 +402,8 @@ func (m Model) View() string {
 		return m.confirmView()
 	case screenExpired:
 		return m.expiredView()
+	case screenActivateConfirm:
+		return m.activateConfirmView()
 	case screenPIM:
 		return m.pimView()
 	}
@@ -392,6 +430,23 @@ func (m Model) confirmView() string {
 		return appStyle.Render(box)
 	}
 	return appStyle.Render(lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, box))
+}
+
+// activateConfirmView asks before activating the selected eligible role.
+func (m Model) activateConfirmView() string {
+	e := m.activateEligible
+	via := "directly"
+	if g := e.ViaGroup(); g != "" {
+		via = "via " + g
+	}
+	return m.pimBox(lipgloss.JoinVertical(lipgloss.Left,
+		confirmTitleStyle.Render("Activate "+e.RoleName+"?"),
+		"",
+		"Scope: "+e.ScopeName+" ("+e.ScopeType+"), "+via+".",
+		"It will be active for the policy's maximum duration.",
+		"",
+		confirmKeysStyle.Render("y")+" activate     "+confirmKeysStyle.Render("N")+" cancel",
+	))
 }
 
 // pimView shows the eligible resource roles for the tenant chosen with "p".
@@ -439,4 +494,10 @@ func (m Model) Selected() *config.Tenant {
 // LoginWanted returns the tenant the user asked to (re)login with "l", or nil.
 func (m Model) LoginWanted() *config.Tenant {
 	return m.loginWanted
+}
+
+// Activation returns the PIM activation the user confirmed with "a" then "y",
+// or nil; cmd/tui.go runs it after the program exits.
+func (m Model) Activation() *activation {
+	return m.activation
 }
