@@ -125,15 +125,16 @@ func SessionState(configDir, tenantID string) (valid bool, expiresOn string) {
 	return true, strings.TrimSpace(out.String())
 }
 
-// TenantToken acquires an ARM access token for a specific tenant, regardless of
-// which subscription is currently active. This matters because a profile's
-// active subscription may belong to a different tenant, and az rest would then
-// use that wrong-tenant token — which the PIM API rejects with a misleading
-// AadPremiumLicenseRequired. A failure here usually means the session for this
-// tenant has lapsed.
-func TenantToken(configDir, tenantID string) (string, error) {
+// TenantToken acquires an access token for a specific tenant and resource,
+// regardless of which subscription is currently active. This matters because a
+// profile's active subscription may belong to a different tenant, and az rest
+// would then use that wrong-tenant token — which the PIM API rejects with a
+// misleading AadPremiumLicenseRequired. A failure here usually means the session
+// for this tenant has lapsed. resource is e.g. "https://management.azure.com" or
+// "https://graph.microsoft.com".
+func TenantToken(configDir, tenantID, resource string) (string, error) {
 	cmd := command(configDir, "account", "get-access-token",
-		"--tenant", tenantID, "--resource", "https://management.azure.com",
+		"--tenant", tenantID, "--resource", resource,
 		"--query", "accessToken", "--output", "tsv", "--only-show-errors")
 	out, err := output(cmd)
 	if err != nil {
@@ -157,6 +158,16 @@ func RestGET(configDir, url, token string) ([]byte, error) {
 	if token != "" {
 		args = append(args, "--headers", "Authorization=Bearer "+token)
 	}
+	return output(command(configDir, args...))
+}
+
+// RestPUT runs `az rest --method PUT` with a JSON body, scoped to configDir and
+// using the given tenant token as an explicit Authorization header (mirroring
+// RestGET). It is the write counterpart used to activate a PIM role.
+func RestPUT(configDir, url, token, body string) ([]byte, error) {
+	args := []string{"rest", "--method", "PUT", "--url", url,
+		"--headers", "Content-Type=application/json", "Authorization=Bearer " + token,
+		"--body", body, "--only-show-errors"}
 	return output(command(configDir, args...))
 }
 

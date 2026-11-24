@@ -1,6 +1,7 @@
 package pim
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,11 +10,11 @@ import (
 	"time"
 )
 
-// stubPIM swaps the two Azure CLI seams for one test, restoring them after. The
-// get func answers both the subscriptions list and the per-scope query, routed
-// by URL.
+// stubPIM swaps the two read seams for one test, restoring them after. The get
+// func answers both the subscriptions list and the per-scope query, routed by
+// URL. The token func takes the resource (ARM or Graph).
 func stubPIM(t *testing.T,
-	token func(configDir, tenantID string) (string, error),
+	token func(configDir, tenantID, resource string) (string, error),
 	get func(configDir, url, token string) ([]byte, error),
 ) {
 	t.Helper()
@@ -75,7 +76,7 @@ func TestListEligibleQueriesWithTenantToken(t *testing.T) {
 		queried  int
 	)
 	stubPIM(t,
-		func(_, tenantID string) (string, error) { return "tok-" + tenantID, nil },
+		func(_, tenantID, _ string) (string, error) { return "tok-" + tenantID, nil },
 		func(_, url, token string) ([]byte, error) {
 			mu.Lock()
 			gotToken = token
@@ -115,7 +116,7 @@ func TestListEligibleQueriesWithTenantToken(t *testing.T) {
 func TestListEligibleDedupesAndSorts(t *testing.T) {
 	mg := inst{name: "mg1", role: "Owner", scopeName: "Root MG", scopeType: "managementgroup", pType: "Group", pName: "Team"}
 	stubPIM(t,
-		func(_, _ string) (string, error) { return "tok", nil },
+		func(_, _, _ string) (string, error) { return "tok", nil },
 		func(_, url, _ string) ([]byte, error) {
 			switch {
 			case isSubsList(url):
@@ -146,7 +147,7 @@ func TestListEligibleDedupesAndSorts(t *testing.T) {
 func TestListEligibleTokenError(t *testing.T) {
 	want := errors.New("session expired; run 'azsel login'")
 	stubPIM(t,
-		func(_, _ string) (string, error) { return "", want },
+		func(_, _, _ string) (string, error) { return "", want },
 		func(_, _, _ string) ([]byte, error) { t.Fatal("queried despite token failure"); return nil, nil },
 	)
 	if _, err := ListEligible("/cfg", "TID"); !errors.Is(err, want) {
@@ -157,7 +158,7 @@ func TestListEligibleTokenError(t *testing.T) {
 func TestListEligibleSubscriptionsError(t *testing.T) {
 	want := errors.New("cannot list subscriptions")
 	stubPIM(t,
-		func(_, _ string) (string, error) { return "tok", nil },
+		func(_, _, _ string) (string, error) { return "tok", nil },
 		func(_, url, _ string) ([]byte, error) {
 			if isSubsList(url) {
 				return nil, want
@@ -173,7 +174,7 @@ func TestListEligibleSubscriptionsError(t *testing.T) {
 func TestListEligibleNoSubscriptions(t *testing.T) {
 	queried := false
 	stubPIM(t,
-		func(_, _ string) (string, error) { return "tok", nil },
+		func(_, _, _ string) (string, error) { return "tok", nil },
 		func(_, url, _ string) ([]byte, error) {
 			if isSubsList(url) {
 				return subsBody(), nil
@@ -197,7 +198,7 @@ func TestListEligibleNoSubscriptions(t *testing.T) {
 // A failure on one subscription must not hide the eligibilities from the others.
 func TestListEligibleSkipsPerScopeErrors(t *testing.T) {
 	stubPIM(t,
-		func(_, _ string) (string, error) { return "tok", nil },
+		func(_, _, _ string) (string, error) { return "tok", nil },
 		func(_, url, _ string) ([]byte, error) {
 			switch {
 			case isSubsList(url):
@@ -220,7 +221,7 @@ func TestListEligibleSkipsPerScopeErrors(t *testing.T) {
 func TestListEligibleEmptyTenantID(t *testing.T) {
 	called := false
 	stubPIM(t,
-		func(_, _ string) (string, error) { called = true; return "", nil },
+		func(_, _, _ string) (string, error) { called = true; return "", nil },
 		func(_, _, _ string) ([]byte, error) { return nil, nil },
 	)
 	_, err := ListEligible("/cfg", "  ")
@@ -229,5 +230,218 @@ func TestListEligibleEmptyTenantID(t *testing.T) {
 	}
 	if called {
 		t.Error("acquired a token despite an empty tenant ID")
+	}
+}
+
+// --- activation ---
+
+// stubActivate swaps every seam Activate uses (token, get, put, clock, guid).
+func stubActivate(t *testing.T,
+	token func(configDir, tenantID, resource string) (string, error),
+	get func(configDir, url, token string) ([]byte, error),
+	put func(configDir, url, token, body string) ([]byte, error),
+) {
+	t.Helper()
+	ot, og, op, on, ou := tenantToken, restGet, restPut, now, newGUID
+	tenantToken, restGet, restPut = token, get, put
+	now = func() time.Time { return time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC) }
+	newGUID = func() string { return "req-guid" }
+	t.Cleanup(func() { tenantToken, restGet, restPut, now, newGUID = ot, og, op, on, ou })
+}
+
+func policyBody(maxDur string) []byte {
+	return []byte(`{"value":[{"properties":{"effectiveRules":[` +
+		`{"id":"/x/Expiration_EndUser_Assignment","maximumDuration":"` + maxDur + `"}]}}]}`)
+}
+
+func sampleEligible() Eligible {
+	return Eligible{
+		RoleName: "Owner", ScopeName: "AOC root",
+		ScopeID:          "/providers/Microsoft.Management/managementGroups/aocroot",
+		RoleDefinitionID: "/subscriptions/s/providers/Microsoft.Authorization/roleDefinitions/abc",
+		ScheduleID:       "/providers/Microsoft.Management/managementGroups/aocroot/providers/Microsoft.Authorization/roleEligibilitySchedules/xyz",
+	}
+}
+
+// Activate issues a SelfActivate PUT with MY user id (not the group's), the
+// linked schedule, the policy's max duration and the fixed justification.
+func TestActivateBuildsSelfActivateRequest(t *testing.T) {
+	var (
+		putURL, putToken, putBody string
+	)
+	stubActivate(t,
+		func(_, _, resource string) (string, error) {
+			if strings.Contains(resource, "graph") {
+				return "graph-tok", nil
+			}
+			return "arm-tok", nil
+		},
+		func(_, url, token string) ([]byte, error) {
+			switch {
+			case strings.Contains(url, "/v1.0/me"):
+				if token != "graph-tok" {
+					t.Errorf("/me queried with %q, wanted the graph token", token)
+				}
+				return []byte(`{"id":"my-id"}`), nil
+			case strings.Contains(url, "roleManagementPolicyAssignments"):
+				return policyBody("PT8H"), nil
+			}
+			return nil, fmt.Errorf("unexpected GET %q", url)
+		},
+		func(_, url, token, body string) ([]byte, error) {
+			putURL, putToken, putBody = url, token, body
+			return []byte(`{"properties":{"status":"Provisioned"}}`), nil
+		},
+	)
+
+	summary, err := Activate("/cfg", "TID", sampleEligible())
+	if err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	for _, want := range []string{"Owner", "AOC root", "8h"} {
+		if !strings.Contains(summary, want) {
+			t.Errorf("summary %q missing %q", summary, want)
+		}
+	}
+	if putToken != "arm-tok" {
+		t.Errorf("PUT used token %q, wanted the ARM token", putToken)
+	}
+	for _, want := range []string{
+		"/providers/Microsoft.Management/managementGroups/aocroot/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/req-guid",
+		"api-version=2020-10-01",
+	} {
+		if !strings.Contains(putURL, want) {
+			t.Errorf("PUT url %q missing %q", putURL, want)
+		}
+	}
+	var req struct {
+		Properties struct {
+			PrincipalID      string `json:"principalId"`
+			RoleDefinitionID string `json:"roleDefinitionId"`
+			RequestType      string `json:"requestType"`
+			Linked           string `json:"linkedRoleEligibilityScheduleId"`
+			Justification    string `json:"justification"`
+			ScheduleInfo     struct {
+				Expiration struct {
+					Type     string `json:"type"`
+					Duration string `json:"duration"`
+				} `json:"expiration"`
+			} `json:"scheduleInfo"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(putBody), &req); err != nil {
+		t.Fatalf("PUT body is not valid JSON: %v\n%s", err, putBody)
+	}
+	p := req.Properties
+	if p.PrincipalID != "my-id" {
+		t.Errorf("principalId = %q, wanted my own id (not the group)", p.PrincipalID)
+	}
+	if p.RequestType != "SelfActivate" {
+		t.Errorf("requestType = %q", p.RequestType)
+	}
+	if p.Linked != sampleEligible().ScheduleID {
+		t.Errorf("linkedRoleEligibilityScheduleId = %q", p.Linked)
+	}
+	if p.Justification != "Activated via azsel" {
+		t.Errorf("justification = %q", p.Justification)
+	}
+	if p.ScheduleInfo.Expiration.Type != "AfterDuration" || p.ScheduleInfo.Expiration.Duration != "PT8H" {
+		t.Errorf("expiration = %+v, wanted AfterDuration PT8H", p.ScheduleInfo.Expiration)
+	}
+}
+
+func TestActivateUsesPolicyMaxDuration(t *testing.T) {
+	var dur string
+	stubActivate(t,
+		func(_, _, _ string) (string, error) { return "tok", nil },
+		func(_, url, _ string) ([]byte, error) {
+			if strings.Contains(url, "/v1.0/me") {
+				return []byte(`{"id":"my-id"}`), nil
+			}
+			return policyBody("PT4H"), nil
+		},
+		func(_, _, _, body string) ([]byte, error) {
+			var r struct {
+				Properties struct {
+					ScheduleInfo struct {
+						Expiration struct{ Duration string } `json:"expiration"`
+					} `json:"scheduleInfo"`
+				} `json:"properties"`
+			}
+			_ = json.Unmarshal([]byte(body), &r)
+			dur = r.Properties.ScheduleInfo.Expiration.Duration
+			return []byte(`{}`), nil
+		},
+	)
+	if _, err := Activate("/cfg", "TID", sampleEligible()); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if dur != "PT4H" {
+		t.Errorf("duration = %q, wanted the policy max PT4H", dur)
+	}
+}
+
+func TestActivateFallsBackTo8hWhenPolicyUnavailable(t *testing.T) {
+	var dur string
+	stubActivate(t,
+		func(_, _, _ string) (string, error) { return "tok", nil },
+		func(_, url, _ string) ([]byte, error) {
+			if strings.Contains(url, "/v1.0/me") {
+				return []byte(`{"id":"my-id"}`), nil
+			}
+			return nil, errors.New("policy read forbidden")
+		},
+		func(_, _, _, body string) ([]byte, error) {
+			var r struct {
+				Properties struct {
+					ScheduleInfo struct {
+						Expiration struct{ Duration string } `json:"expiration"`
+					} `json:"scheduleInfo"`
+				} `json:"properties"`
+			}
+			_ = json.Unmarshal([]byte(body), &r)
+			dur = r.Properties.ScheduleInfo.Expiration.Duration
+			return []byte(`{}`), nil
+		},
+	)
+	if _, err := Activate("/cfg", "TID", sampleEligible()); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if dur != "PT8H" {
+		t.Errorf("duration = %q, wanted the PT8H fallback", dur)
+	}
+}
+
+func TestActivatePropagatesPutError(t *testing.T) {
+	want := errors.New("RoleAssignmentRequestPolicyValidationFailed: MFA required")
+	stubActivate(t,
+		func(_, _, _ string) (string, error) { return "tok", nil },
+		func(_, url, _ string) ([]byte, error) {
+			if strings.Contains(url, "/v1.0/me") {
+				return []byte(`{"id":"my-id"}`), nil
+			}
+			return policyBody("PT8H"), nil
+		},
+		func(_, _, _, _ string) ([]byte, error) { return nil, want },
+	)
+	if _, err := Activate("/cfg", "TID", sampleEligible()); !errors.Is(err, want) {
+		t.Errorf("error = %v, wanted the PUT error surfaced", err)
+	}
+}
+
+func TestActivateMissingIdentifiers(t *testing.T) {
+	called := false
+	stubActivate(t,
+		func(_, _, _ string) (string, error) { called = true; return "tok", nil },
+		func(_, _, _ string) ([]byte, error) { return nil, nil },
+		func(_, _, _, _ string) ([]byte, error) { return nil, nil },
+	)
+	e := sampleEligible()
+	e.ScheduleID = ""
+	if _, err := Activate("/cfg", "TID", e); err == nil || !strings.Contains(err.Error(), "identifiers") {
+		t.Errorf("error = %v, wanted a missing-identifiers error", err)
+	}
+	if called {
+		t.Error("acquired a token despite missing identifiers")
 	}
 }

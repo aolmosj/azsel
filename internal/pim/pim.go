@@ -1,9 +1,11 @@
-// Package pim reads a user's eligible Azure resource-role PIM assignments
-// (Azure RBAC — Microsoft.Authorization) through the Azure CLI, so azsel can
-// show, per tenant, the roles the user could activate without the portal.
+// Package pim reads and activates a user's eligible Azure resource-role PIM
+// assignments (Azure RBAC — Microsoft.Authorization) through the Azure CLI, so
+// azsel can show, per tenant, the roles the user could activate — and activate
+// one — without the portal.
 package pim
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -12,6 +14,11 @@ import (
 	"time"
 
 	"github.com/aolmosj/azsel/internal/azure"
+)
+
+const (
+	armResource   = "https://management.azure.com"
+	graphResource = "https://graph.microsoft.com"
 )
 
 // Eligible is one eligible resource-role assignment for the current user: a role
@@ -30,6 +37,11 @@ type Eligible struct {
 	// assigned to the user directly.
 	PrincipalType string
 	PrincipalName string
+
+	// Identifiers needed to activate: the role definition, the linked eligibility
+	// schedule, and the authoritative scope for the activation request.
+	RoleDefinitionID string
+	ScheduleID       string
 }
 
 // ViaGroup reports the group the eligibility comes through, or "" when it is
@@ -41,10 +53,14 @@ func (e Eligible) ViaGroup() string {
 	return ""
 }
 
-// Seams onto the Azure CLI, package variables so tests can run without az.
+// Seams onto the Azure CLI (and the clock / id generator), package variables so
+// tests can run without az.
 var (
 	restGet     = azure.RestGET
+	restPut     = azure.RestPUT
 	tenantToken = azure.TenantToken
+	now         = time.Now
+	newGUID     = randomGUID
 )
 
 // scopeQueryConcurrency bounds how many `az rest` processes run at once.
@@ -85,7 +101,7 @@ func ListEligible(configDir, tenantID string) ([]Eligible, error) {
 		return nil, fmt.Errorf("tenant has no tenant ID configured; cannot query PIM")
 	}
 
-	token, err := tenantToken(configDir, tenantID)
+	token, err := tenantToken(configDir, tenantID, armResource)
 	if err != nil {
 		return nil, err
 	}
@@ -148,9 +164,12 @@ type eligibleResponse struct {
 type eligibleInstance struct {
 	Name       string `json:"name"`
 	Properties struct {
-		Status             string  `json:"status"`
-		EndDateTime        *string `json:"endDateTime"`
-		ExpandedProperties struct {
+		Status                    string  `json:"status"`
+		EndDateTime               *string `json:"endDateTime"`
+		Scope                     string  `json:"scope"`
+		RoleDefinitionID          string  `json:"roleDefinitionId"`
+		RoleEligibilityScheduleID string  `json:"roleEligibilityScheduleId"`
+		ExpandedProperties        struct {
 			Scope struct {
 				ID          string `json:"id"`
 				DisplayName string `json:"displayName"`
@@ -219,14 +238,22 @@ func sortEligibles(byName map[string]eligibleInstance) []Eligible {
 	out := make([]Eligible, 0, len(byName))
 	for _, it := range byName {
 		p := it.Properties
+		// Prefer properties.scope (the authoritative scope id used for the
+		// activation request) and fall back to the expanded one for display.
+		scopeID := p.Scope
+		if scopeID == "" {
+			scopeID = p.ExpandedProperties.Scope.ID
+		}
 		e := Eligible{
-			RoleName:      p.ExpandedProperties.RoleDefinition.DisplayName,
-			ScopeName:     p.ExpandedProperties.Scope.DisplayName,
-			ScopeType:     p.ExpandedProperties.Scope.Type,
-			ScopeID:       p.ExpandedProperties.Scope.ID,
-			Status:        p.Status,
-			PrincipalType: p.ExpandedProperties.Principal.Type,
-			PrincipalName: p.ExpandedProperties.Principal.DisplayName,
+			RoleName:         p.ExpandedProperties.RoleDefinition.DisplayName,
+			ScopeName:        p.ExpandedProperties.Scope.DisplayName,
+			ScopeType:        p.ExpandedProperties.Scope.Type,
+			ScopeID:          scopeID,
+			Status:           p.Status,
+			PrincipalType:    p.ExpandedProperties.Principal.Type,
+			PrincipalName:    p.ExpandedProperties.Principal.DisplayName,
+			RoleDefinitionID: p.RoleDefinitionID,
+			ScheduleID:       p.RoleEligibilityScheduleID,
 		}
 		// A missing or unparseable end date leaves End nil (treated as
 		// permanent) rather than failing the whole listing.
@@ -251,4 +278,138 @@ func sortEligibles(byName map[string]eligibleInstance) []Eligible {
 		return strings.Compare(a.PrincipalName, b.PrincipalName)
 	})
 	return out
+}
+
+// defaultDuration is used when the policy's maximum activation duration cannot
+// be read — a conservative 8 hours.
+const defaultDuration = "PT8H"
+
+// Activate self-activates one eligible role for the maximum duration the policy
+// allows (falling back to 8 hours) with a fixed justification. It returns a
+// short human summary on success. A policy that requires MFA or a ticket at
+// activation makes the underlying PUT fail; that ARM error is returned as-is.
+func Activate(configDir, tenantID string, e Eligible) (string, error) {
+	if strings.TrimSpace(tenantID) == "" {
+		return "", fmt.Errorf("tenant has no tenant ID configured; cannot activate PIM")
+	}
+	if e.ScopeID == "" || e.RoleDefinitionID == "" || e.ScheduleID == "" {
+		return "", fmt.Errorf("this eligibility is missing the identifiers needed to activate")
+	}
+
+	armToken, err := tenantToken(configDir, tenantID, armResource)
+	if err != nil {
+		return "", err
+	}
+	principalID, err := signedInUserID(configDir, tenantID)
+	if err != nil {
+		return "", err
+	}
+	duration := policyMaxDuration(configDir, e.ScopeID, e.RoleDefinitionID, armToken)
+
+	body, err := json.Marshal(map[string]any{
+		"properties": map[string]any{
+			"principalId":                     principalID,
+			"roleDefinitionId":                e.RoleDefinitionID,
+			"requestType":                     "SelfActivate",
+			"linkedRoleEligibilityScheduleId": e.ScheduleID,
+			"scheduleInfo": map[string]any{
+				"startDateTime": now().UTC().Format(time.RFC3339),
+				"expiration": map[string]any{
+					"type":     "AfterDuration",
+					"duration": duration,
+				},
+			},
+			"justification": "Activated via azsel",
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("building activation request: %w", err)
+	}
+
+	url := armResource + e.ScopeID +
+		"/providers/Microsoft.Authorization/roleAssignmentScheduleRequests/" +
+		newGUID() + "?api-version=2020-10-01"
+	if _, err := restPut(configDir, url, armToken, string(body)); err != nil {
+		return "", err
+	}
+
+	role := e.RoleName
+	if role == "" {
+		role = "the role"
+	}
+	return fmt.Sprintf("Activated %s at %s for %s.", role, e.ScopeName, humanDuration(duration)), nil
+}
+
+// signedInUserID returns the caller's object id in the tenant — the principalId
+// for a self-activation — via Microsoft Graph /me with a tenant Graph token. A
+// guest's id differs per tenant, and the eligibility's own principalId is the
+// group for group-inherited roles, not the user, so it cannot be reused here.
+func signedInUserID(configDir, tenantID string) (string, error) {
+	graphToken, err := tenantToken(configDir, tenantID, graphResource)
+	if err != nil {
+		return "", err
+	}
+	body, err := restGet(configDir, graphResource+"/v1.0/me?$select=id", graphToken)
+	if err != nil {
+		return "", err
+	}
+	var me struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(body, &me); err != nil || me.ID == "" {
+		return "", fmt.Errorf("could not determine the signed-in user id for the activation")
+	}
+	return me.ID, nil
+}
+
+// policyMaxDuration reads the maximum activation duration the PIM policy allows
+// for the role at the scope, falling back to defaultDuration when it cannot be
+// read.
+func policyMaxDuration(configDir, scope, roleDefinitionID, token string) string {
+	url := armResource + scope +
+		"/providers/Microsoft.Authorization/roleManagementPolicyAssignments" +
+		"?api-version=2020-10-01&$filter=roleDefinitionId+eq+'" + roleDefinitionID + "'"
+	body, err := restGet(configDir, url, token)
+	if err != nil {
+		return defaultDuration
+	}
+	var resp struct {
+		Value []struct {
+			Properties struct {
+				EffectiveRules []struct {
+					ID              string `json:"id"`
+					MaximumDuration string `json:"maximumDuration"`
+				} `json:"effectiveRules"`
+			} `json:"properties"`
+		} `json:"value"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return defaultDuration
+	}
+	for _, a := range resp.Value {
+		for _, r := range a.Properties.EffectiveRules {
+			if strings.Contains(r.ID, "Expiration_EndUser_Assignment") && r.MaximumDuration != "" {
+				return r.MaximumDuration
+			}
+		}
+	}
+	return defaultDuration
+}
+
+// humanDuration turns an ISO-8601 duration like "PT8H" into "8h" for a message,
+// falling back to the raw value for shapes it does not recognise.
+func humanDuration(d string) string {
+	if s := strings.TrimPrefix(d, "PT"); s != d && s != "" {
+		return strings.ToLower(s)
+	}
+	return d
+}
+
+// randomGUID returns a random v4 UUID for a roleAssignmentScheduleRequest name.
+func randomGUID() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
